@@ -19,7 +19,13 @@ export namespace KiloRun {
     process.exit(1)
   }
 
-  export async function runBuiltin(sdk: KiloClient, sessionID: string, command: BuiltinCommand, modelArg?: string) {
+  export async function runBuiltin(
+    sdk: KiloClient,
+    sessionID: string,
+    command: BuiltinCommand,
+    modelArg?: string,
+    directory?: string,
+  ) {
     const model = await resolveModel(sdk, modelArg)
     if (!model) {
       UI.error("No model specified and no default provider configured")
@@ -29,6 +35,7 @@ export namespace KiloRun {
     if (command === "compact" || command === "summarize") {
       await sdk.session.summarize({
         sessionID,
+        directory,
         providerID: model.providerID,
         modelID: model.modelID,
       })
