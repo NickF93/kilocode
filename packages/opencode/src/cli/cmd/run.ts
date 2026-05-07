@@ -691,8 +691,10 @@ export const RunCommand = cmd({
         process.exit(1)
       })
 
-      if (KiloRun.isBuiltin(args.command)) await KiloRun.runBuiltin(sdk, sessionID, args.command, args.model) // kilocode_change
+      // kilocode_change start - handle built-in session commands
+      if (KiloRun.isBuiltin(args.command)) await KiloRun.runBuiltin(sdk, sessionID, args.command, args.model)
       else if (args.command) {
+        // kilocode_change end
         await sdk.session.command({
           sessionID,
           agent,
