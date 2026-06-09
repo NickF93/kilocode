@@ -149,6 +149,10 @@ export const QuestionDock: Component<{ request: QuestionRequest }> = (props) => 
     syncAgent(answers, kinds)
 
     const outcome = pickOutcome({ single: single(), multi: multi(), custom })
+    if (outcome.kind === "submit") {
+      reply(answers)
+      return
+    }
     if (outcome.kind === "advance") {
       setStore("tab", store.tab + 1)
     }

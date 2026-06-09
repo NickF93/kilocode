@@ -1,8 +1,8 @@
 /**
  * QuestionDock submission contract tests.
  *
- * Static analysis — reads QuestionDock source and locks the explicit-submit
- * behavior for single-question option picks.
+ * Static analysis — reads QuestionDock source and locks the answer flow
+ * for option picks.
  */
 
 import { describe, expect, it } from "bun:test"
@@ -25,13 +25,14 @@ function extractBody(source: string, name: string): string {
   return next === -1 ? rest : rest.slice(0, next)
 }
 
-describe("QuestionDock explicit submit contract", () => {
+describe("QuestionDock submit contract", () => {
   const source = readFile(FILE)
   const pick = extractBody(source, "pick")
 
-  it("keeps option clicks local instead of replying immediately", () => {
+  it("replies immediately for single-question single-select option picks", () => {
     expect(pick.length).toBeGreaterThan(0)
-    expect(pick).not.toContain("reply([[answer]])")
+    expect(pick).toContain('if (outcome.kind === "submit")')
+    expect(pick).toContain("reply(answers)")
   })
 
   it("still advances multi-question single-select flows", () => {
