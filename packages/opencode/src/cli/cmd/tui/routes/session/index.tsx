@@ -463,6 +463,29 @@ export function Session() {
     })
   })
 
+  // kilocode_change start - surface actionable memory events as lightweight toasts
+  let lastMemory = ""
+  const memoryEvent = (evt: { properties: { sessionID?: string; detail?: unknown } }) => {
+    if (evt.properties.sessionID && evt.properties.sessionID !== route.sessionID) return
+    const detail = evt.properties.detail
+    if (!detail || typeof detail !== "object") return
+    const item = detail as { type?: unknown; message?: unknown }
+    if (item.type === "skipped") return
+    if (typeof item.message !== "string") return
+    const key = `${evt.properties.sessionID ?? ""}:${String(item.type)}:${item.message}`
+    if (key === lastMemory) return
+    lastMemory = key
+    toast.show({
+      message: item.message,
+      variant: item.type === "saved" ? "success" : "info",
+      duration: 3500,
+    })
+  }
+  event.on("memory.status", memoryEvent)
+  event.on("memory.updated", memoryEvent)
+  event.on("memory.error", memoryEvent)
+  // kilocode_change end
+
   const exit = useExit()
 
   // kilocode_change start
@@ -1588,7 +1611,27 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
   const { theme } = useTheme()
   const sync = useSync()
   const messages = createMemo(() => sync.data.message[props.message.sessionID] ?? [])
+  // kilocode_change start - show when targeted memory was used for an assistant step
   const model = createMemo(() => Model.name(ctx.providers(), props.message.providerID, props.message.modelID))
+  const memory = createMemo(() => {
+    for (const part of props.parts) {
+      if (part.type !== "text") continue
+      const meta = (part as TextPart & { metadata?: { kiloMemory?: unknown } }).metadata?.kiloMemory
+      if (!meta || typeof meta !== "object") continue
+      const value = meta as { type?: unknown; tokens?: unknown; count?: unknown; files?: unknown; sources?: unknown }
+      const type = value.type === "startup" ? "startup" : "recall"
+      const tokens = typeof value.tokens === "number" ? value.tokens : 0
+      const files = Array.isArray(value.files)
+        ? value.files.filter((item) => typeof item === "string")
+        : Array.isArray(value.sources)
+          ? value.sources.filter((item) => typeof item === "string")
+          : []
+      const count = typeof value.count === "number" ? value.count : files.length
+      return { type, tokens, count }
+    }
+    return undefined
+  })
+  // kilocode_change end
 
   const final = createMemo(() => {
     return props.message.finish && !["tool-calls", "unknown"].includes(props.message.finish)
@@ -1654,6 +1697,7 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
         <Match when={props.last || final() || props.message.error?.name === "MessageAbortedError"}>
           <box paddingLeft={3}>
             <text marginTop={1}>
+              {/* kilocode_change start - show per-turn memory usage in the assistant footer */}
               <span
                 style={{
                   fg:
@@ -1669,6 +1713,16 @@ function AssistantMessage(props: { message: AssistantMessage; parts: Part[]; las
               <Show when={duration()}>
                 <span style={{ fg: theme.textMuted }}> · {Locale.duration(duration())}</span>
               </Show>
+              <Show when={memory()}>
+                {(item) => (
+                  <span style={{ fg: theme.textMuted }}>
+                    {" "}
+                    · Memory used · {item().type === "startup" ? "startup ctx" : `${item().count} items`} ·{" "}
+                    {item().tokens.toLocaleString()} tokens
+                  </span>
+                )}
+              </Show>
+              {/* kilocode_change end */}
               <Show when={props.message.error?.name === "MessageAbortedError"}>
                 <span style={{ fg: theme.textMuted }}> · interrupted</span>
               </Show>

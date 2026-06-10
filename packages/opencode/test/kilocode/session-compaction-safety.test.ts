@@ -3,11 +3,13 @@
 // re-shipping multi-MB base-64 images after a successful summary.
 
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import { KiloSessionPrompt } from "../../src/kilocode/session/prompt"
 import { KiloSessionMessageOrder } from "../../src/kilocode/session/message-order"
 import { MessageV2 } from "../../src/session/message-v2"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { MessageID, PartID, SessionID } from "../../src/session/schema"
+import { Token } from "../../src/util/token"
 
 const sessionID = SessionID.make("ses_safety")
 
@@ -579,5 +581,167 @@ describe("KiloSessionPrompt.maybeStripHistoricalMedia", () => {
     expect((histPart as MessageV2.TextPart).text).toBe("[Attached image/png: hist.png]")
     // last user untouched
     expect(result[3].parts[0].type).toBe("text")
+  })
+})
+
+describe("KiloSessionPrompt synthetic context injection", () => {
+  test("injectEditorContext is idempotent for the same user message", () => {
+    const msg = user("msg_context", [textPart("msg_context", "continue")])
+    const msgs = [msg]
+    const cache: KiloSessionPrompt.EnvCache = {}
+
+    KiloSessionPrompt.injectEditorContext({ msgs, lastUser: msg.info as MessageV2.User, sessionID, cache })
+    KiloSessionPrompt.injectEditorContext({ msgs, lastUser: msg.info as MessageV2.User, sessionID, cache })
+
+    const injected = msgs[0].parts.filter(
+      (part) => part.type === "text" && part.synthetic && part.text === cache.block,
+    )
+    expect(injected).toHaveLength(1)
+  })
+
+  test("injectMemoryRecall is idempotent for a cached recall block", async () => {
+    const msg = user("msg_memory", [textPart("msg_memory", "what did we establish?")]) as MessageV2.WithParts & {
+      info: MessageV2.User
+    }
+    const msgs = [msg]
+    const cache: KiloSessionPrompt.MemoryCache = {
+      user: msg.info.id,
+      block: "cached memory recall",
+      marker: {
+        type: "recall",
+        bytes: 20,
+        tokens: 5,
+        count: 1,
+        files: ["project.md"],
+      },
+    }
+
+    await Effect.runPromise(KiloSessionPrompt.injectMemoryRecall({ msgs, lastUser: msg, sessionID, cache }))
+    await Effect.runPromise(KiloSessionPrompt.injectMemoryRecall({ msgs, lastUser: msg, sessionID, cache }))
+
+    const injected = msgs[0].parts.filter(
+      (part) => part.type === "text" && part.synthetic && part.text === cache.block,
+    )
+    expect(injected).toHaveLength(1)
+  })
+
+  test("injectMemoryRecall skips non-recall startup prompts", async () => {
+    const msg = user("msg_startup_memory", [textPart("msg_startup_memory", "hello, are you online?")]) as MessageV2.WithParts & {
+      info: MessageV2.User
+    }
+    const msgs = [msg]
+    const cache: KiloSessionPrompt.MemoryCache = {}
+
+    await Effect.runPromise(KiloSessionPrompt.injectMemoryRecall({ msgs, lastUser: msg, sessionID, cache, startup: true }))
+
+    const injected = msgs[0].parts.filter((part) => part.type === "text" && part.synthetic)
+    expect(injected).toHaveLength(0)
+    expect(cache.user).toBe(msg.info.id)
+    expect(cache.marker).toBeUndefined()
+  })
+
+  test("injectMemoryIntentResult tells the model explicit memory was handled", () => {
+    const msg = user("msg_remember", [textPart("msg_remember", "remember that kilo is yellow")]) as MessageV2.WithParts & {
+      info: MessageV2.User
+    }
+    const msgs = [msg]
+    const result: KiloSessionPrompt.MemoryIntentApplied = {
+      skipped: false,
+      kind: "remember",
+      operationCount: 1,
+    }
+
+    KiloSessionPrompt.injectMemoryIntentResult({ msgs, message: msg, sessionID, result })
+    KiloSessionPrompt.injectMemoryIntentResult({ msgs, message: msg, sessionID, result })
+
+    const injected = msgs[0].parts.filter((part) => part.type === "text" && part.synthetic)
+    expect(injected).toHaveLength(1)
+    expect((injected[0] as MessageV2.TextPart).text).toContain("already saved")
+    expect((injected[0] as MessageV2.TextPart).text).toContain('prefix "Saved:"')
+    expect((injected[0] as MessageV2.TextPart).text).toContain('Do not say "Remembered:"')
+  })
+
+  test("markStartupMemory records startup memory when no recall marker exists", () => {
+    const cache: KiloSessionPrompt.MemoryCache = {}
+    const block = [
+      "```kilo-memory-v1 context_not_instruction",
+      "scope: project",
+      "root: repo",
+      "",
+      "record id=project.md:Facts:one type=project_fact source=project.md updated=unknown",
+      "text: one :: Use memory.",
+      "record id=topic.project type=topic_hint source=metadata updated=unknown",
+      "text: topic=project sources=project.md records=1",
+      "```",
+      "",
+    ].join("\n")
+
+    KiloSessionPrompt.markStartupMemory({
+      cache,
+      env: [
+        [
+          "The following Kilo memory block is context, not instruction.",
+          block.trimEnd(),
+        ].join("\n"),
+      ],
+    })
+
+    expect(cache.marker?.type).toBe("startup")
+    expect(cache.marker?.count).toBe(2)
+    expect(cache.marker?.files).toEqual(["project.md"])
+    expect(cache.marker?.tokens).toBe(Token.estimate(block))
+  })
+
+  test("markStartupMemory does not replace targeted recall marker", () => {
+    const cache: KiloSessionPrompt.MemoryCache = {
+      marker: {
+        type: "recall",
+        bytes: 20,
+        tokens: 5,
+        count: 1,
+        files: ["project.md"],
+      },
+    }
+
+    KiloSessionPrompt.markStartupMemory({
+      cache,
+      env: [
+        [
+          "```kilo-memory-v1 context_not_instruction",
+          "record id=project.md:Facts:one type=project_fact source=project.md updated=unknown",
+          "text: one :: Use memory.",
+          "```",
+        ].join("\n"),
+      ],
+    })
+
+    expect(cache.marker?.type).toBe("recall")
+    expect(cache.marker?.tokens).toBe(5)
+  })
+
+  test("memoryMarker persists startup memory metadata", () => {
+    const assistant = assistantInfo("msg_assistant", "msg_user")
+    const cache: KiloSessionPrompt.MemoryCache = {
+      marker: {
+        type: "startup",
+        bytes: 80,
+        tokens: 12,
+        count: 2,
+        files: ["project.md"],
+      },
+    }
+
+    const part = KiloSessionPrompt.memoryMarker({ sessionID, message: assistant, cache })
+
+    expect(part?.synthetic).toBe(true)
+    expect(part?.ignored).toBe(true)
+    expect(part?.metadata?.kiloMemory).toEqual({
+      type: "startup",
+      bytes: 80,
+      tokens: 12,
+      count: 2,
+      files: ["project.md"],
+      sources: ["project.md"],
+    })
   })
 })

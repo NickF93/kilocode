@@ -1,6 +1,6 @@
 import type { TuiPlugin, TuiPluginApi } from "@kilocode/plugin/tui"
 import type { InternalTuiPlugin } from "../../plugin/internal"
-import { createMemo, Match, Show, Switch } from "solid-js"
+import { createMemo, Match, Show, Switch } from "solid-js" // kilocode_change - memory footer moved to Kilo-owned plugin
 import { Global } from "@opencode-ai/core/global"
 
 const id = "internal:home-footer"
@@ -45,6 +45,7 @@ function Mcp(props: { api: TuiPluginApi }) {
   )
 }
 
+// kilocode_change start - keep shared home footer upstream-shaped; Kilo memory footer is a Kilo-owned plugin
 function Version(props: { api: TuiPluginApi }) {
   const theme = () => props.api.theme.current
 
@@ -90,5 +91,6 @@ const plugin: InternalTuiPlugin = {
   id,
   tui,
 }
+// kilocode_change end
 
 export default plugin

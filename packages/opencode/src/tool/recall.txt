@@ -7,6 +7,8 @@ Two modes:
 Usage notes:
   - Search matches against session titles using case-insensitive substring matching
   - Results are limited to the current project/worktree family
+  - If Kilo memory shows a recent session with `session=<id>`, use kilo_memory_recall digest before this tool
+  - Use read mode with a `session=<id>` only when saved Kilo memory is insufficient or the user asks for full transcript detail
   - Reading a session from a different project is rejected
-  - Use search mode first to find session IDs, then read mode to get the full conversation
-  - Session transcripts can be large; prefer searching first to narrow down which session to read
+  - Use search mode first to find session IDs when memory does not already provide one
+  - Session transcripts can be large; prefer kilo_memory_recall or search before read mode

@@ -80,7 +80,11 @@ export function provider(model: Provider.Model) {
 }
 
 export interface Interface {
-  readonly environment: (model: Provider.Model, editorContext?: EditorContext) => Effect.Effect<string[]> // kilocode_change
+  readonly environment: (
+    model: Provider.Model,
+    editorContext?: EditorContext,
+    sessionID?: string,
+  ) => Effect.Effect<string[]> // kilocode_change
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
 
@@ -96,9 +100,10 @@ export const layer = Layer.effect(
       environment: Effect.fn("SystemPrompt.environment")(function* (
         model: Provider.Model,
         editorContext?: EditorContext,
+        sessionID?: string,
       ) {
         const ctx = yield* InstanceState.context
-        return KilocodeSystemPrompt.environment({ ctx, model, editor: editorContext })
+        return yield* KilocodeSystemPrompt.environment({ ctx, model, editor: editorContext, sessionID })
       }),
       // kilocode_change end
 

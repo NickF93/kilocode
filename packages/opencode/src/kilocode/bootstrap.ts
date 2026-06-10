@@ -66,5 +66,7 @@ export namespace KilocodeBootstrap {
     }),
   )
 
-  export const defaultLayer = layer.pipe(Layer.provide(KiloSessions.defaultLayer))
+  export const defaultLayer = layer.pipe(
+    Layer.provide(KiloSessions.defaultLayer),
+  )
 }

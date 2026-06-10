@@ -42,6 +42,7 @@ function infos() {
   return {
     codebase: info("codebase_search"),
     recall: info("recall"),
+    memory: info("kilo_memory_recall"),
     manager: info("agent_manager"),
     process: info("background_process"),
   }

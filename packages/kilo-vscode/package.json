@@ -195,6 +195,16 @@
         "category": "Kilo Code"
       },
       {
+        "command": "kilo-code.new.showMemory",
+        "title": "Show Memory",
+        "category": "Kilo Code"
+      },
+      {
+        "command": "kilo-code.new.toggleMemory",
+        "title": "Toggle Project Memory",
+        "category": "Kilo Code"
+      },
+      {
         "command": "kilo-code.new.autocomplete.generateSuggestions",
         "title": "Generate Suggested Edits",
         "category": "Kilo Code"

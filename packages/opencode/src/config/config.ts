@@ -137,6 +137,13 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPlugin.Spec[] }>(
   return config
 }
 
+// kilocode_change start - avoid creating package files in memory-only .kilo directories
+function needsLocalPluginPackage(list: ConfigPlugin.Spec[] | undefined) {
+  if (!list?.length) return false
+  return list.some((item) => ConfigPlugin.pluginSpecifier(item).startsWith("file://"))
+}
+// kilocode_change end
+
 export type Layout = ConfigLayout.Layout
 
 // kilocode_change start - indexing configuration
@@ -791,18 +798,21 @@ export const layer = Layer.effect(
 
         // kilocode_change start
         for (const dir of unique(directories)) {
+          let depsNeeded = false
           if (KilocodeConfig.isConfigDir(dir, Flag.KILO_CONFIG_DIR)) {
             for (const file of KilocodeConfig.ALL_CONFIG_FILES) {
               const source = path.join(dir, file)
               log.debug(`loading config from ${source}`)
+              const next = yield* loadFile(source).pipe(
+                Effect.catchDefect((err: unknown) => {
+                  caughtWarning(warnings, source, err)
+                  return Effect.succeed({} as Info)
+                }),
+              )
+              depsNeeded = depsNeeded || needsLocalPluginPackage(next.plugin)
               yield* merge(
                 source,
-                yield* loadFile(source).pipe(
-                  Effect.catchDefect((err: unknown) => {
-                    caughtWarning(warnings, source, err)
-                    return Effect.succeed({} as Info)
-                  }),
-                ),
+                next,
               )
               result.agent ??= {}
               result.mode ??= {}
@@ -812,29 +822,6 @@ export const layer = Layer.effect(
           // kilocode_change end
 
           yield* ensureGitignore(dir).pipe(Effect.orDie)
-
-          const dep = yield* npmSvc
-            .install(dir, {
-              add: [
-                {
-                  name: "@kilocode/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
-                },
-              ],
-            })
-            .pipe(
-              Effect.exit,
-              Effect.tap((exit) =>
-                Exit.isFailure(exit)
-                  ? Effect.sync(() => {
-                      log.warn("background dependency install failed", { dir, error: String(exit.cause) })
-                    })
-                  : Effect.void,
-              ),
-              Effect.asVoid,
-              Effect.forkDetach,
-            )
-          deps.push(dep)
 
           // kilocode_change start - propagate parse errors to the Warning accumulator
           result.command = mergeDeep(
@@ -847,7 +834,35 @@ export const layer = Layer.effect(
           // Auto-discovered plugins under `.opencode/plugin(s)` are already local files, so ConfigPlugin.load
           // returns normalized Specs and we only need to attach origin metadata here.
           const list = yield* Effect.promise(() => ConfigPlugin.load(dir))
+          depsNeeded = depsNeeded || needsLocalPluginPackage(list) // kilocode_change
           yield* mergePluginOrigins(dir, list)
+
+          // kilocode_change start - local plugin package support is only needed when local plugins exist
+          if (depsNeeded) {
+            const dep = yield* npmSvc
+              .install(dir, {
+                add: [
+                  {
+                    name: "@kilocode/plugin",
+                    version: InstallationLocal ? undefined : InstallationVersion,
+                  },
+                ],
+              })
+              .pipe(
+                Effect.exit,
+                Effect.tap((exit) =>
+                  Exit.isFailure(exit)
+                    ? Effect.sync(() => {
+                        log.warn("background dependency install failed", { dir, error: String(exit.cause) })
+                      })
+                    : Effect.void,
+                ),
+                Effect.asVoid,
+                Effect.forkDetach,
+              )
+            deps.push(dep)
+          }
+          // kilocode_change end
         }
 
         if (process.env.KILO_CONFIG_CONTENT) {

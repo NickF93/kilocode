@@ -18,6 +18,7 @@ import { ProviderProvider, useProvider } from "./context/provider"
 import { ConfigProvider } from "./context/config"
 import { DisplayProvider } from "./context/display"
 import { IndexingProvider } from "./context/indexing"
+import { MemoryProvider } from "./context/memory"
 import { SessionProvider, useSession } from "./context/session"
 import { LanguageBridge } from "./context/language-bridge"
 import { ChatView } from "./components/chat"
@@ -364,11 +365,13 @@ const App: Component = () => {
                               <KiloEmbeddingModelsProvider>
                                 <NotificationsProvider>
                                   <SessionProvider>
-                                    <FeedbackProvider>
-                                      <DataBridge>
-                                        <AppContent />
-                                      </DataBridge>
-                                    </FeedbackProvider>
+                                    <MemoryProvider>
+                                      <FeedbackProvider>
+                                        <DataBridge>
+                                          <AppContent />
+                                        </DataBridge>
+                                      </FeedbackProvider>
+                                    </MemoryProvider>
                                   </SessionProvider>
                                 </NotificationsProvider>
                               </KiloEmbeddingModelsProvider>

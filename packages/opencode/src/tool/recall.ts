@@ -13,7 +13,7 @@ import DESCRIPTION from "./recall.txt"
 
 const Parameters = Schema.Struct({
   mode: Schema.Literals(["search", "read"]).annotate({
-    description: "'search' to find sessions by title, 'read' to get a session transcript",
+    description: "'search' to find sessions by title, 'read' to get a full session transcript",
   }),
   query: Schema.optional(Schema.String).annotate({
     description: "Search query to match against session titles (required for search mode)",

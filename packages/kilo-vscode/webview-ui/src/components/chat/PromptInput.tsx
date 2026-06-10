@@ -49,6 +49,7 @@ import {
 import type { ReviewComment, TextPart } from "../../types/messages"
 import { formatReviewCommentsMarkdown } from "../../utils/review-comment-markdown"
 import { pendingDraftKey, scopeDraftKey, sessionDraftKey } from "../../utils/prompt-drafts"
+import { parseMemoryCommand } from "../../utils/memory-command"
 
 // Per-session input text storage (module-level so it survives remounts)
 const drafts = new Map<string, string>()
@@ -744,6 +745,18 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const handleSend = async () => {
     const draft = text().trim()
 
+    const clear = () => {
+      setText("")
+      clearReviewComments()
+      imageAttach.clear()
+      mention.closeMention()
+      slash.close()
+      drafts.delete(draftKey())
+      reviewDrafts.delete(draftKey())
+      imageDrafts.delete(draftKey())
+      if (textareaRef) textareaRef.style.height = "auto"
+    }
+
     // Detect slash command (hoisted for both client and server command checks).
     // Prioritize exact name matches over hint/alias matches so that a server
     // command named e.g. "continue" is not hijacked by a client alias.
@@ -755,16 +768,31 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     // Client-side slash command — runs locally without a backend round-trip
     if (matched?.action) {
-      setText("")
-      clearReviewComments()
-      imageAttach.clear()
-      mention.closeMention()
-      slash.close()
-      drafts.delete(draftKey())
-      reviewDrafts.delete(draftKey())
-      imageDrafts.delete(draftKey())
-      if (textareaRef) textareaRef.style.height = "auto"
+      clear()
       matched.action()
+      return
+    }
+
+    const memory = parseMemoryCommand(draft)
+    if (memory) {
+      if (memory.kind === "usage") {
+        showToast({ variant: "error", title: "Memory command failed", description: memory.reason })
+        return
+      }
+      if (memory.kind === "inspect") {
+        vscode.postMessage({ type: "memoryInspect", sessionID: sid() })
+      }
+      if (memory.kind === "operation") {
+        vscode.postMessage({
+          type: "memoryOperation",
+          operation: memory.operation,
+          sessionID: sid(),
+          text: memory.text,
+          query: memory.query,
+        })
+      }
+      history.append(draft)
+      clear()
       return
     }
 
@@ -827,11 +855,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     history.append(draft)
     history.reset()
-    setText("")
-    clearReviewComments()
-    imageAttach.clear()
-    mention.closeMention()
-    slash.close()
+    clear()
 
     if (textareaRef) textareaRef.style.height = "auto"
   }

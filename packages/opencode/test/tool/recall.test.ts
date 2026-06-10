@@ -2,10 +2,12 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { $ } from "bun"
 import { Effect } from "effect"
+import { Global } from "@opencode-ai/core/global"
 import { Session } from "../../src/session/session"
 import path from "path"
 import { WithInstance } from "../../src/project/with-instance"
 import { RecallTool } from "../../src/tool/recall"
+import { KiloMemory } from "../../src/kilocode/memory"
 import { AppRuntime } from "../../src/effect/app-runtime"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
@@ -13,7 +15,10 @@ import type { Tool } from "../../src/tool/tool"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { RemoteSender } from "../../src/kilo-sessions/remote-sender"
 
+const watch = process.env.KILO_EXPERIMENTAL_DISABLE_FILEWATCHER
+
 beforeEach(() => {
+  process.env.KILO_EXPERIMENTAL_DISABLE_FILEWATCHER = "true"
   spyOn(RemoteSender, "create").mockReturnValue({ handle() {}, dispose() {} })
 })
 
@@ -30,11 +35,23 @@ const ctx: Tool.Context = {
 
 afterEach(async () => {
   mock.restore()
+  if (watch === undefined) delete process.env.KILO_EXPERIMENTAL_DISABLE_FILEWATCHER
+  if (watch !== undefined) process.env.KILO_EXPERIMENTAL_DISABLE_FILEWATCHER = watch
   await resetDatabase()
 })
 
 const create = (title: string) =>
   Effect.runPromise(Session.Service.use((svc) => svc.create({ title })).pipe(Effect.provide(Session.defaultLayer)))
+
+async function withConfig<T>(dir: string, fn: () => Promise<T> | T) {
+  const prior = Global.Path.config
+  ;(Global.Path as { config: string }).config = dir
+  try {
+    return await fn()
+  } finally {
+    ;(Global.Path as { config: string }).config = prior
+  }
+}
 
 describe("tool.recall", () => {
   test("search is limited to the current project worktrees", async () => {
@@ -139,4 +156,37 @@ describe("tool.recall", () => {
       await $`git worktree remove ${worktree}`.cwd(first.path).quiet().nothrow()
     }
   })
+
+  test("reads the session id exposed by memory recent-session index", async () => {
+    await using dir = await tmpdir({ git: true })
+    await withConfig(path.join(dir.path, "global", ".kilo"), async () => {
+      const session = await WithInstance.provide({
+        directory: dir.path,
+        fn: () => create("memory indexed session"),
+      })
+      const memory = { directory: dir.path, worktree: dir.path }
+      await KiloMemory.enable({ ctx: memory })
+      await KiloMemory.recordSession({
+        ctx: memory,
+        sessionID: session.id,
+        summary: "Objective: verify direct recall-tool lookup from memory.",
+        time: Date.UTC(2026, 0, 1, 0, 0),
+      })
+      const recalled = await KiloMemory.context({ ctx: memory, record: false })
+
+      const result = await WithInstance.provide({
+        directory: dir.path,
+        fn: async () => {
+          const info = await AppRuntime.runPromise(RecallTool)
+          const tool = await AppRuntime.runPromise(info.init())
+          return AppRuntime.runPromise(tool.execute({ mode: "read", sessionID: session.id }, ctx))
+        },
+      })
+
+      expect(recalled.blocks[0]?.text).toContain(`session=${session.id}`)
+      expect(recalled.blocks[0]?.text).toContain("verify direct recall-tool lookup")
+      expect(result.output).toContain("# Session: memory indexed session")
+    })
+  })
+
 })

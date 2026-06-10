@@ -2,11 +2,15 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import * as Log from "@opencode-ai/core/util/log"
 import { Agent } from "../../src/agent/agent"
+import { Bus } from "../../src/bus"
 import { KiloIndexing } from "../../src/kilocode/indexing"
 import { KilocodeBootstrap } from "../../src/kilocode/bootstrap"
 import { KiloSessions } from "../../src/kilo-sessions/kilo-sessions"
 import { KiloToolRegistry } from "../../src/kilocode/tool/registry"
 import { ModelID, ProviderID } from "../../src/provider/schema"
+import { Provider } from "../../src/provider/provider"
+import { Session } from "../../src/session/session"
+import { SessionSummary } from "../../src/session/summary"
 import { ToolRegistry } from "../../src/tool/registry"
 import type * as Tool from "../../src/tool/tool"
 import { Instance } from "../../src/project/instance"
@@ -188,6 +192,7 @@ describe("kilocode tool registry indexing", () => {
     const tools = {
       codebase: def("codebase_search"),
       semantic: def("semantic_search"),
+      memory: def("kilo_memory_recall"),
       recall: def("recall"),
       manager: def("agent_manager"),
       process: def("background_process"),
@@ -197,25 +202,31 @@ describe("kilocode tool registry indexing", () => {
       process.env["KILO_CLIENT"] = "cli"
       expect(KiloToolRegistry.extra(tools, {}).map((tool) => tool.id)).toEqual([
         "semantic_search",
+        "kilo_memory_recall",
         "recall",
         "background_process",
       ])
       expect(KiloToolRegistry.extra(tools, { experimental: { codebase_search: true } }).map((tool) => tool.id)).toEqual(
-        ["codebase_search", "semantic_search", "recall", "background_process"],
+        ["codebase_search", "semantic_search", "kilo_memory_recall", "recall", "background_process"],
       )
 
       process.env["KILO_CLIENT"] = "vscode"
       expect(KiloToolRegistry.extra(tools, { experimental: { codebase_search: true } }).map((tool) => tool.id)).toEqual(
-        ["codebase_search", "semantic_search", "recall", "background_process", "agent_manager"],
+        ["codebase_search", "semantic_search", "kilo_memory_recall", "recall", "background_process", "agent_manager"],
       )
       expect(KiloToolRegistry.extra({ ...tools, semantic: undefined }, {}).map((tool) => tool.id)).toEqual([
+        "kilo_memory_recall",
         "recall",
         "background_process",
         "agent_manager",
       ])
 
       process.env["KILO_CLIENT"] = "desktop"
-      expect(KiloToolRegistry.extra(tools, {}).map((tool) => tool.id)).toEqual(["semantic_search", "recall"])
+      expect(KiloToolRegistry.extra(tools, {}).map((tool) => tool.id)).toEqual([
+        "semantic_search",
+        "kilo_memory_recall",
+        "recall",
+      ])
     } finally {
       if (prev === undefined) delete process.env["KILO_CLIENT"]
       if (prev !== undefined) process.env["KILO_CLIENT"] = prev
@@ -236,7 +247,15 @@ describe("kilocode tool registry indexing", () => {
     try {
       await Effect.runPromise(
         KilocodeBootstrap.Service.use((svc) => svc.init()).pipe(
-          Effect.provide(KilocodeBootstrap.layer.pipe(Layer.provide(sessions))),
+          Effect.provide(
+            KilocodeBootstrap.layer.pipe(
+              Layer.provide(sessions),
+              Layer.provide(Session.defaultLayer),
+              Layer.provide(SessionSummary.defaultLayer),
+              Layer.provide(Provider.defaultLayer),
+              Layer.provide(Bus.layer),
+            ),
+          ),
           Effect.scoped,
         ),
       )

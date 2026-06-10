@@ -7,6 +7,7 @@ import { KiloSessionPromptQueue } from "@/kilocode/session/prompt-queue" // kilo
 import { KiloSession } from "@/kilocode/session" // kilocode_change
 import { KiloCostPropagation } from "@/kilocode/session/cost-propagation" // kilocode_change
 import { KiloSessionProcessor } from "@/kilocode/session/processor" // kilocode_change
+import { MemoryTurn } from "@/kilocode/memory/turn" // kilocode_change
 import { Suggestion } from "@/kilocode/suggestion" // kilocode_change
 import { Question } from "@/question" // kilocode_change
 import { zod } from "@opencode-ai/core/effect-zod" // kilocode_change
@@ -553,6 +554,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const tools: Record<string, AITool> = {}
       const run = yield* runner()
       const promptOps = yield* ops()
+      const ctx = yield* InstanceState.context // kilocode_change
+      const memory = yield* KiloSessionPrompt.memoryToolEnabled({ ctx }) // kilocode_change
 
       const context = (args: any, options: ToolExecutionOptions): Tool.Context => ({
         sessionID: input.session.id,
@@ -598,6 +601,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         providerID: input.model.providerID,
         agent: input.agent,
       })) {
+        if (item.id === "kilo_memory_recall" && !memory) continue // kilocode_change
         const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
         tools[item.id] = tool({
           description: item.description,
@@ -931,7 +935,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         time: { created: Date.now() },
         agent: lastUser.agent,
         model: lastUser.model,
-        editorContext: lastUser.editorContext, // kilocode_change — preserve editor context
+        editorContext: lastUser.editorContext, // kilocode_change - preserve editor context
       }
       yield* sessions.updateMessage(summaryUserMsg)
       yield* sessions.updatePart({
@@ -1725,10 +1729,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // kilocode_change end
         }
 
-        // kilocode_change start — unblock tools waiting on user input so any in-flight
+        // kilocode_change start - unblock tools waiting on user input so any in-flight
         // handle.process can return. Adding a new user message is the signal that any
         // pending tool prompt is superseded, so we dismiss even on the noReply path.
-        // Critically we never cancel the in-flight fiber here — that would abort the
+        // Critically we never cancel the in-flight fiber here; that would abort the
         // streamText call mid-tokens and cut off the assistant reply. The enqueue call
         // below serializes this prompt after the current turn's current LLM step, and
         // runLoop checks hasFollowup between steps to break out once it has been
@@ -1765,7 +1769,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       throw new Error("Impossible")
     })
 
-    // kilocode_change — mutable close-reason per session, set by runLoop and read by loop
+    // kilocode_change - mutable close-reason per session, set by runLoop and read by loop
     const closeReasons = new Map<string, KiloSession.CloseReason>()
 
     // kilocode_change start - retain request-scoped snapshot initialization policy
@@ -1776,14 +1780,16 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     ) {
       const sessionID = input.sessionID
       // kilocode_change end
-      // kilocode_change — cache environment details per turn (prompt caching)
+      // kilocode_change - cache environment details per turn (prompt caching)
       const envCache: KiloSessionPrompt.EnvCache = {}
+      const memoryCache: KiloSessionPrompt.MemoryCache = {} // kilocode_change
       closeReasons.delete(sessionID) // kilocode_change
       let compactionAttempts = 0 // kilocode_change - cap compaction attempts per turn to avoid infinite loops
       const ctx = yield* InstanceState.context
       const slog = elog.with({ sessionID })
       let structured: unknown
       let step = 0
+      let memoryIntent: KiloSessionPrompt.MemoryIntentApplied | undefined // kilocode_change
       const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
       while (true) {
@@ -1800,6 +1806,19 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // kilocode_change end
 
         if (!lastUser) throw new Error("No user message found in stream. This should never happen.")
+
+        // kilocode_change start - enforce explicit memory edits at the actual model-loop boundary
+        const intentMessage = latest.userMessage
+        if (step === 0 && intentMessage) {
+          const result = yield* KiloSessionPrompt.applyMemoryIntent({ ctx, message: intentMessage, sessionID }).pipe(
+            Effect.catchCause((cause) =>
+              slog.warn("memory intent failed", { sessionID, error: Cause.squash(cause) }),
+            ),
+          )
+          if (result?.skipped === false && result.kind && result.operationCount !== undefined)
+            memoryIntent = { skipped: false, kind: result.kind, operationCount: result.operationCount }
+        }
+        // kilocode_change end
 
         const lastAssistantMsg = msgs.findLast(
           (msg) => msg.info.role === "assistant" && msg.info.id === lastAssistant?.id,
@@ -1820,7 +1839,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         // kilocode_change start - keep provider-executed tools from forcing a re-loop
         // Some providers return "stop" even when the assistant message contains tool calls.
         // Keep the loop running so tool results can be sent back to the model.
-        // Skip provider-executed tool parts — those were fully handled within the
+        // Skip provider-executed tool parts; those were fully handled within the
         // provider's stream (e.g. DWS Agent Platform) and don't need a re-loop.
         const hasToolCalls =
           lastAssistantMsg?.parts.some((part) => part.type === "tool" && !part.metadata?.providerExecuted) ?? false
@@ -1908,7 +1927,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             message: lastFinished,
           })
           if (guard.exhausted) {
-            // lastFinished is a prior turn's assistant — record exhaustion on the
+            // lastFinished is a prior turn's assistant; record exhaustion on the
             // message whose size tipped us past the compaction cap.
             yield* sessions.updateMessage(lastFinished)
             yield* bus.publish(Session.Event.Error, { sessionID, error: guard.error })
@@ -2017,19 +2036,39 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
           yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
 
-          // kilocode_change start — ephemeral context injection + post-summary
+          // kilocode_change start - ephemeral context injection + post-summary
           // media strip (keeps outgoing body under the gateway body-size limit
           // even when filterCompacted couldn't trim the pre-summary history).
           KiloSessionPrompt.injectEditorContext({ msgs, lastUser, sessionID, cache: envCache })
+          if (latest.userMessage) {
+            if (memoryIntent) {
+              KiloSessionPrompt.injectMemoryIntentResult({
+                msgs,
+                message: latest.userMessage as MessageV2.WithParts & { info: MessageV2.User },
+                sessionID,
+                result: memoryIntent,
+              })
+            }
+            if (!memoryIntent) {
+              yield* KiloSessionPrompt.injectMemoryRecall({
+                msgs,
+                lastUser: latest.userMessage as MessageV2.WithParts & { info: MessageV2.User },
+                sessionID,
+                cache: memoryCache,
+                startup: !msgs.some((m) => m.info.role === "assistant"),
+              })
+            }
+          }
           msgs = KiloSessionPrompt.maybeStripHistoricalMedia(msgs)
           // kilocode_change end
 
           // kilocode_change start - persistently prune stale tool outputs when payload is already large
           const [skills, env, instructions] = yield* Effect.all([
             sys.skills(agent),
-            sys.environment(model, lastUser.editorContext), // kilocode_change
+            sys.environment(model, lastUser.editorContext, sessionID), // kilocode_change
             instruction.system().pipe(Effect.orDie),
           ])
+          KiloSessionPrompt.markStartupMemory({ env, cache: memoryCache }) // kilocode_change
           let modelMsgs = yield* MessageV2.toModelMessagesEffect(msgs, model)
           const size = Buffer.byteLength(JSON.stringify(modelMsgs))
           if (size > REQUEST_PRUNE_BYTES) {
@@ -2039,6 +2078,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             msgs = KiloSessionPrompt.trimBeforeLastSummary(msgs)
             yield* plugin.trigger("experimental.chat.messages.transform", {}, { messages: msgs })
             KiloSessionPrompt.injectEditorContext({ msgs, lastUser, sessionID, cache: envCache })
+            const recalled = msgs.findLast(
+              (m): m is MessageV2.WithParts & { info: MessageV2.User } => m.info.role === "user",
+            )
+            if (recalled) {
+              if (memoryIntent) {
+                KiloSessionPrompt.injectMemoryIntentResult({ msgs, message: recalled, sessionID, result: memoryIntent })
+              }
+              if (!memoryIntent)
+                yield* KiloSessionPrompt.injectMemoryRecall({
+                  msgs,
+                  lastUser: recalled,
+                  sessionID,
+                  cache: memoryCache,
+                  startup: !msgs.some((m) => m.info.role === "assistant"),
+                })
+            }
             msgs = KiloSessionPrompt.maybeStripHistoricalMedia(msgs)
             modelMsgs = yield* MessageV2.toModelMessagesEffect(msgs, model)
             const nextSize = Buffer.byteLength(JSON.stringify(modelMsgs))
@@ -2063,6 +2118,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             model,
             toolChoice: format.type === "json_schema" ? "required" : undefined,
           })
+
+          // kilocode_change start - persist a lightweight marker when this assistant step used recalled memory
+          const memory = KiloSessionPrompt.memoryMarker({ sessionID, message: handle.message, cache: memoryCache })
+          if (memory) yield* sessions.updatePart(memory)
+          // kilocode_change end
 
           if (structured !== undefined) {
             handle.message.structured = structured
@@ -2121,7 +2181,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               overflow: !handle.message.finish && handle.compactError?.() !== undefined, // kilocode_change
             })
           }
-          // kilocode_change start — break out so a newer queued prompt can take over
+          // kilocode_change start - break out so a newer queued prompt can take over
           // instead of starting another LLM step for the now-superseded turn. The
           // current handle.process has fully drained (tokens + inline tool calls) by
           // the time we get here, so nothing is cut off.
@@ -2163,9 +2223,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
     )(function* (
       input: LoopInput,
     ) {
-      // kilocode_change start
+      // kilocode_change start - recover stale turns and run memory capture around each turn
       yield* KiloSessionPrompt.recoverDanglingAssistant({ sessionID: input.sessionID, status, sessions })
       yield* KiloSessionPrompt.recoverProviderFinishError({ sessionID: input.sessionID, status, sessions })
+      MemoryTurn.open({ sessionID: input.sessionID })
       yield* bus.publish(KiloSession.Event.TurnOpen, { sessionID: input.sessionID })
       return yield* Effect.onExit(
         state.ensureRunning(
@@ -2174,14 +2235,22 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           runLoop(input).pipe(Effect.orDie),
         ), // kilocode_change
         Effect.fnUntraced(function* (exit) {
+          const reason = KiloSessionPrompt.resolveCloseReason({
+            sessionID: input.sessionID,
+            closeReasons,
+            exit,
+          })
           yield* bus.publish(KiloSession.Event.TurnClose, {
             sessionID: input.sessionID,
-            reason: KiloSessionPrompt.resolveCloseReason({
-              sessionID: input.sessionID,
-              closeReasons,
-              exit,
-            }),
+            reason,
           })
+          yield* MemoryTurn.close({
+            sessionID: input.sessionID,
+            reason,
+            sessions,
+            summary,
+            provider,
+          }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
         }),
       )
       // kilocode_change end
@@ -2448,7 +2517,7 @@ export const CommandInput = Schema.Struct({
     description: "Wait silently if snapshot initialization is slow instead of asking the user.",
   }),
   // kilocode_change end
-  // Inlined (no identifier annotation) to keep the original SDK output — the
+  // Inlined (no identifier annotation) to keep the original SDK output; the
   // PromptInput call site below references FilePartInput by ref via the
   // Schema export in message-v2.ts.
   parts: Schema.optional(

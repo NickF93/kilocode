@@ -143,6 +143,17 @@ import { stopSessionProcesses } from "./kilo-provider/background-process"
 
 type MessageLoadMode = "replace" | "prepend" | "focus" | "reconcile"
 type ContextMessage = { contextDirectory?: unknown }
+type MemorySourceFile = "project.md" | "environment.md" | "corrections.md"
+type MemoryOperation = "enable" | "disable" | "rebuild" | "remember" | "correct" | "forget" | "purge"
+type MemoryMessage = {
+  operation: MemoryOperation
+  sessionID?: string
+  text?: string
+  query?: string
+  key?: string
+  file?: MemorySourceFile
+  section?: string
+}
 // Helper to map agent data to the subset of fields sent to the webview
 const mapAgent = (a: Agent) => ({
   name: a.name,
@@ -268,6 +279,8 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
   private cachedKiloEmbeddingModelsMessage: unknown = null
   /** Cached mcpStatusLoaded payload so requestMcpStatus can be served before client is ready */
   private cachedMcpStatusMessage: unknown = null
+  /** Cached memoryLoaded payloads so requestMemory can be served before client is ready */
+  private cachedMemoryMessages = new Map<string, unknown>()
   /** Ref-count of in-flight handleUpdateConfig calls; prevents fetchAndSendConfig from sending stale data */
   private pending = 0
   private configWarningsShown = false
@@ -344,7 +357,6 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
   ) {
     this.projectDirectory = opts.projectDirectory
     this.slimEditMetadata = opts.slimEditMetadata ?? true
-
     TelemetryProxy.getInstance().setProvider(this)
   }
 
@@ -754,6 +766,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
         return
       }
       this.visibleTaskStreams.handle(message)
+      if (await this.handleMemoryMessage(message)) return
       switch (message.type) {
         case "webviewReady":
           console.log("[Kilo New] KiloProvider: ✅ webviewReady received")
@@ -1385,6 +1398,7 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
         this.fetchAndSendConfig(),
         this.fetchAndSendIndexingStatus(),
         this.fetchAndSendNotifications(),
+        this.fetchAndSendMemory(),
         this.seedSessionStatusMap(),
       ])
       this.cachedGitRepo = await hasGit(this.client!, this.getWorkspaceDirectory())
@@ -2041,6 +2055,281 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     } catch (error) {
       console.error("[Kilo New] KiloProvider: Failed to fetch MCP status:", error)
     }
+  }
+
+  private memoryFile(value: unknown): MemorySourceFile | undefined {
+    if (value === "project.md" || value === "environment.md" || value === "corrections.md") return value
+    return undefined
+  }
+
+  private memoryOperation(value: unknown): MemoryOperation | undefined {
+    if (
+      value === "enable" ||
+      value === "disable" ||
+      value === "rebuild" ||
+      value === "remember" ||
+      value === "correct" ||
+      value === "forget" ||
+      value === "purge"
+    )
+      return value
+    return undefined
+  }
+
+  private async handleMemoryMessage(message: Record<string, unknown>): Promise<boolean> {
+    if (message.type === "requestMemory") {
+      this.fetchAndSendMemory(
+        typeof message.sessionID === "string" ? message.sessionID : undefined,
+        message.includeSources === true,
+      ).catch((e) => console.error("[Kilo New] fetchAndSendMemory failed:", e))
+      return true
+    }
+    if (message.type === "memoryInspect") {
+      await this.handleMemoryInspect(typeof message.sessionID === "string" ? message.sessionID : undefined)
+      return true
+    }
+    if (message.type === "memoryOperation") {
+      const operation = this.memoryOperation(message.operation)
+      if (!operation) return true
+      await this.handleMemoryOperation({
+        operation,
+        sessionID: typeof message.sessionID === "string" ? message.sessionID : undefined,
+        text: typeof message.text === "string" ? message.text : undefined,
+        query: typeof message.query === "string" ? message.query : undefined,
+        key: typeof message.key === "string" ? message.key : undefined,
+        file: this.memoryFile(message.file),
+        section: typeof message.section === "string" ? message.section : undefined,
+      })
+      return true
+    }
+    if (message.type === "memoryPrompt") {
+      await this.handleMemoryPrompt(
+        message.operation,
+        typeof message.sessionID === "string" ? message.sessionID : undefined,
+      )
+      return true
+    }
+    return false
+  }
+
+  private async fetchAndSendMemory(sessionID?: string, includeSources = false): Promise<void> {
+    const directory = this.getWorkspaceDirectory(sessionID ?? this.currentSession?.id)
+    if (!this.client) {
+      const cached = this.cachedMemoryMessages.get(directory)
+      if (cached && typeof cached === "object" && !Array.isArray(cached)) this.postMessage({ ...cached, sessionID })
+      return
+    }
+
+    try {
+      const { data: status } = await retry(() => this.client!.memory.status({ directory }, { throwOnError: true }))
+      const show = includeSources
+        ? (await retry(() => this.client!.memory.show({ directory }, { throwOnError: true }))).data
+        : undefined
+      const message = {
+        type: "memoryLoaded",
+        sessionID,
+        status,
+        ...(show ? { show } : {}),
+      }
+      this.cachedMemoryMessages.set(directory, message)
+      this.postMessage(message)
+    } catch (error) {
+      console.error("[Kilo New] KiloProvider: Failed to fetch memory:", error)
+      this.postMessage({
+        type: "memoryLoaded",
+        sessionID,
+        error: getErrorMessage(error) || "Failed to load memory",
+      })
+    }
+  }
+
+  private async handleMemoryPrompt(operation: unknown, sessionID?: string): Promise<void> {
+    if (operation !== "remember" && operation !== "forget") return
+    const title = operation === "remember" ? "Remember in project memory" : "Forget project memory"
+    const placeHolder = operation === "remember" ? "Project fact, command, or correction" : "Text to remove"
+    const value = await vscode.window.showInputBox({ title, placeHolder, ignoreFocusOut: true })
+    if (!value?.trim()) return
+    await this.handleMemoryOperation({
+      operation,
+      sessionID,
+      ...(operation === "remember" ? { text: value.trim() } : { query: value.trim() }),
+    })
+  }
+
+  private async handleMemoryInspect(sessionID?: string): Promise<void> {
+    if (!this.client) {
+      this.postMessage({
+        type: "memoryLoaded",
+        sessionID,
+        error: "Not connected to CLI backend",
+      })
+      return
+    }
+
+    try {
+      const directory = this.getWorkspaceDirectory(sessionID ?? this.currentSession?.id)
+      const { data: show } = await this.client.memory.show({ directory }, { throwOnError: true })
+      const { data: status } = await this.client.memory.status({ directory }, { throwOnError: true })
+      const current = sessionID ?? this.currentSession?.id
+      const startup =
+        current && status.state.stats.lastInjectedSessionID === current ? status.state.stats.lastInjectedTokens : 0
+      const content = [
+        "# Kilo Memory",
+        "",
+        `Root: ${show.root}`,
+        `Enabled: ${show.state.enabled ? "yes" : "no"}`,
+        `Startup context: ${show.state.autoInject ? "on" : "paused"}`,
+        `Stored index tokens: ${status.index.estimatedTokens}`,
+        `Startup context tokens for this session: ${startup}`,
+        `Last auto-save model usage: ${status.state.stats.lastConsolidationTokens} tokens`,
+        "",
+        "## project.md",
+        show.sources.project.trim(),
+        "",
+        "## environment.md",
+        show.sources.environment.trim(),
+        "",
+        "## corrections.md",
+        show.sources.corrections.trim(),
+        "",
+        "## index.kmem",
+        show.index.trim(),
+        "",
+        "## items",
+        show.items.trim(),
+        "",
+        "## changes.log",
+        show.changes.trim(),
+        "",
+        "## decisions.jsonl",
+        show.decisions.trim(),
+        "",
+      ].join("\n")
+      await vscode.workspace
+        .openTextDocument({ content, language: "markdown" })
+        .then((doc) => vscode.window.showTextDocument(doc, { preview: true }))
+      const message = {
+        type: "memoryLoaded",
+        sessionID,
+        status,
+        show,
+      }
+      this.cachedMemoryMessages.set(directory, message)
+      this.postMessage(message)
+    } catch (error) {
+      console.error("[Kilo New] KiloProvider: Failed to inspect memory:", error)
+      this.postMessage({
+        type: "memoryLoaded",
+        sessionID,
+        error: getErrorMessage(error) || "Failed to inspect memory",
+      })
+    }
+  }
+
+  private async handleMemoryOperation(message: MemoryMessage): Promise<void> {
+    if (!this.client) {
+      this.postMessage({
+        type: "memoryOperationResult",
+        operation: message.operation,
+        sessionID: message.sessionID,
+        ok: false,
+        error: "Not connected to CLI backend",
+      })
+      return
+    }
+
+    try {
+      const directory = this.getWorkspaceDirectory(message.sessionID ?? this.currentSession?.id)
+      const data =
+        message.operation === "enable"
+          ? (await this.client.memory.enable({ directory }, { throwOnError: true })).data
+          : message.operation === "disable"
+            ? (await this.client.memory.disable({ directory }, { throwOnError: true })).data
+            : message.operation === "rebuild"
+              ? (await this.client.memory.rebuild({ directory }, { throwOnError: true })).data
+              : message.operation === "purge"
+                ? (await this.client.memory.purge({ directory }, { throwOnError: true })).data
+                : message.operation === "remember"
+                  ? await this.rememberMemory(directory, message)
+                  : message.operation === "correct"
+                    ? await this.correctMemory(directory, message)
+                    : await this.forgetMemory(directory, message)
+      const [{ data: status }, { data: show }] = await Promise.all([
+        this.client.memory.status({ directory }, { throwOnError: true }),
+        this.client.memory.show({ directory }, { throwOnError: true }),
+      ])
+      const result = {
+        type: "memoryOperationResult",
+        operation: message.operation,
+        sessionID: message.sessionID,
+        ok: true,
+        status,
+        show,
+        result: data,
+      }
+      const loaded = {
+        type: "memoryLoaded",
+        sessionID: message.sessionID,
+        status,
+        show,
+      }
+      this.cachedMemoryMessages.set(directory, loaded)
+      this.postMessage(result)
+      this.postMessage(loaded)
+    } catch (error) {
+      console.error("[Kilo New] KiloProvider: Failed memory operation:", error)
+      this.postMessage({
+        type: "memoryOperationResult",
+        operation: message.operation,
+        sessionID: message.sessionID,
+        ok: false,
+        error: getErrorMessage(error) || "Memory operation failed",
+      })
+    }
+  }
+
+  private async rememberMemory(directory: string, message: MemoryMessage) {
+    const text = message.text?.trim()
+    if (!text) throw new Error("Memory text is required")
+    return (
+      await this.client!.memory.remember(
+        {
+          directory,
+          text,
+          key: message.key,
+          file: message.file,
+          section: message.section,
+          sessionID: message.sessionID,
+        },
+        { throwOnError: true },
+      )
+    ).data
+  }
+
+  private async correctMemory(directory: string, message: MemoryMessage) {
+    const text = message.text?.trim()
+    if (!text) throw new Error("Correction text is required")
+    return (
+      await this.client!.memory.correct(
+        {
+          directory,
+          text,
+          key: message.key,
+          file: message.file,
+          section: message.section,
+          sessionID: message.sessionID,
+        },
+        { throwOnError: true },
+      )
+    ).data
+  }
+
+  private async forgetMemory(directory: string, message: MemoryMessage) {
+    const query = message.query?.trim()
+    if (!query) throw new Error("Forget query is required")
+    return (
+      await this.client!.memory.forget({ directory, query, sessionID: message.sessionID }, { throwOnError: true })
+    ).data
   }
 
   /**
@@ -3028,6 +3317,25 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
       return
     }
 
+    if (event.type === "memory.status" || event.type === "memory.updated" || event.type === "memory.error") {
+      const props = event.properties as { sessionID?: unknown; detail?: unknown }
+      const eventSessionID = typeof props.sessionID === "string" ? props.sessionID : undefined
+      if (eventSessionID && !this.trackedSessionIds.has(eventSessionID)) return
+      if (!eventSessionID && directory && !sameDirectory(directory, this.getWorkspaceDirectory(this.currentSession?.id))) {
+        return
+      }
+      const sessionID = eventSessionID ?? this.currentSession?.id
+      if (props.detail && typeof props.detail === "object") {
+        this.postMessage({
+          type: "memoryEvent",
+          sessionID,
+          detail: props.detail,
+        })
+      }
+      void this.fetchAndSendMemory(sessionID, false)
+      return
+    }
+
     // Drop session events from other projects before any tracking logic.
     // This must come first: the trackedSessionIds guard below would otherwise
     // let a foreign session through if it was accidentally tracked.
@@ -3200,6 +3508,29 @@ export class KiloProvider implements vscode.WebviewViewProvider, TelemetryProper
     }
 
     this.flushPendingReviewComments()
+  }
+
+  public async inspectMemory(): Promise<void> {
+    await this.handleMemoryInspect(this.currentSession?.id)
+  }
+
+  public async toggleMemory(): Promise<void> {
+    if (!this.client) {
+      void vscode.window.showErrorMessage("Not connected to CLI backend")
+      return
+    }
+
+    const sessionID = this.currentSession?.id
+    const directory = this.getWorkspaceDirectory(sessionID)
+    try {
+      const { data: status } = await this.client.memory.status({ directory }, { throwOnError: true })
+      const operation = status.state.enabled ? "disable" : "enable"
+      await this.handleMemoryOperation({ operation, sessionID })
+      void vscode.window.showInformationMessage(`Project memory ${operation === "enable" ? "enabled" : "disabled"}.`)
+    } catch (error) {
+      console.error("[Kilo New] KiloProvider: Failed to toggle memory:", error)
+      void vscode.window.showErrorMessage(getErrorMessage(error) || "Failed to toggle memory")
+    }
   }
 
   private flushPendingReviewComments(): void {
