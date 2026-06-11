@@ -150,6 +150,23 @@ describe("memory intent", () => {
     expect(MemoryIntent.parse("/remember what command runs CLI tests?")).toBeUndefined()
     expect(MemoryIntent.parse("save what command runs CLI tests?")).toBeUndefined()
 
+    expect(
+      MemoryIntent.parse(
+        "remember not to touch /Users/johnnyeric/Workspace/kilo_workspace/kilocode/packages/opencode/src/session/prompt/plan.txt",
+      ),
+    ).toEqual({
+      kind: "remember",
+      ops: [
+        {
+          action: "add",
+          file: "corrections.md",
+          section: "Corrections",
+          key: "not_to_touch_users_johnnyeric_workspace_kilo_workspace",
+          text: "not to touch /Users/johnnyeric/Workspace/kilo_workspace/kilocode/packages/opencode/src/session/prompt/plan.txt",
+        },
+      ],
+    })
+
     expect(MemoryIntent.parse("remember when touching shared files, add kilocode_change markers")).toEqual({
       kind: "remember",
       ops: [

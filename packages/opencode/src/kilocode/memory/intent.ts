@@ -25,6 +25,10 @@ export namespace MemoryIntent {
   const require = /^\s*always\b[\s:,-]+([\s\S]+)$/i
   const deny = /^\s*never\b[\s:,-]+([\s\S]+)$/i
   const constraint = /\b(always|must|should|prefer|avoid|never)\b|^when\b[\s\S]+\b(add|run|use|avoid|prefer|keep|do not|don't)\b/i
+  // Prohibitions route to corrections.md like "never ..." does: corrections always survive index truncation,
+  // while the env path heuristic would bury "not to touch <path>" in environment.md (lowest index priority).
+  const prohibition =
+    /\b(?:do not|don'?t|not to|no one should)\s+(?:touch|edit|modify|change|delete|remove|rename|commit|push|run|use)\b/i
   const bad = /\b(?:memory|remembered(?:\s+fact)?|stored(?:\s+fact)?)\b[\s\S]*\b(?:wrong|incorrect|stale|outdated)\b/i
   const stale =
     /\b(?:memory|remembered(?:\s+fact)?|stored(?:\s+fact)?)(?:\s+(?:about|for|that))?\s+(.+?)\s+(?:is|was|seems|looks)?\s*(?:wrong|incorrect|stale|outdated)\b/i
@@ -217,6 +221,20 @@ export namespace MemoryIntent {
     if (remembered?.[1] && (rememberQuestion.test(plain) || rememberWhenQuestion.test(plain))) return
     if (!remembered?.[1]) return
     const item = clean(remembered[1])
+    if (prohibition.test(item)) {
+      return {
+        kind: "remember",
+        ops: [
+          {
+            action: "add",
+            file: "corrections.md",
+            section: "Corrections",
+            key: key(item),
+            text: item,
+          },
+        ],
+      }
+    }
     const fixed = constraint.test(item)
     return {
       kind: "remember",
