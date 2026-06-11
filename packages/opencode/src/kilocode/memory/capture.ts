@@ -442,65 +442,6 @@ function envSection(input: string | undefined) {
   return "Commands"
 }
 
-function op(file: MemoryOperations.Add["file"], section: string, key: string, text: string) {
-  return { action: "add", file, section, key, text } satisfies MemoryOperations.Op
-}
-
-export function inferOps(input: { user: string; assistant: string; changed?: string }) {
-  const body = [input.user, input.assistant, input.changed ?? ""].join("\n")
-  const root = /\b(?:repo|repository|workspace|project)\s+root\b|\bfrom\s+(?:the\s+)?(?:repo\s+)?root\b/i.test(body)
-  const run = (command: string) => `Run ${command}${root ? " from the repo root" : ""}.`
-  const ops: MemoryOperations.Op[] = []
-  const add = (item: MemoryOperations.Op) => {
-    if (item.action === "remove") {
-      if (!ops.some((prior) => prior.action === "remove" && prior.query === item.query)) ops.push(item)
-      return
-    }
-    if (
-      !ops.some(
-        (prior) =>
-          prior.action === "add" &&
-          prior.file === item.file &&
-          prior.section === item.section &&
-          prior.key === item.key,
-      )
-    ) {
-      ops.push(item)
-    }
-  }
-  const cmd = (key: string, text: string) => add(op("environment.md", "Commands", key, text))
-  const tooling = (key: string, text: string) => add(op("environment.md", "Tooling", key, text))
-  const correction = (key: string, text: string) => add(op("corrections.md", "Corrections", key, text))
-
-  if (
-    /\b(?:use|uses|with)\s+bun\b|\bbun\s+workspaces?\b|\bbun\.lock\b|\bpackage manager\b[^\n.]{0,80}\bbun\b/i.test(body)
-  ) {
-    tooling("package_manager", "Use Bun for package management and package scripts.")
-  }
-  if (/\bturborepo\b|\bturbo\b|\bbun turbo\b/i.test(body)) {
-    tooling("build_orchestration", "Use Turborepo/Turbo for workspace orchestration.")
-  }
-  if (/\bjava\s+21\b/i.test(body)) {
-    tooling("java_21", "Use Java 21 for project checks or tooling that require it.")
-  }
-  if (/\bbun install\b/i.test(body)) cmd("install_dependencies", run("bun install"))
-  if (/\bbun run dev\b/i.test(body)) cmd("dev_command", run("bun run dev"))
-  if (/\bbun turbo typecheck\b/i.test(body)) cmd("typecheck_command", run("bun turbo typecheck"))
-  if (/packages\/opencode/i.test(body) && /\bbun test\b/i.test(body)) {
-    cmd("cli_tests", "Run bun test from packages/opencode for CLI tests.")
-  }
-  if (/packages\/kilo-vscode/i.test(body) && /\bbun run (typecheck|lint|test:unit|test)\b/i.test(body)) {
-    cmd("vscode_tests", "Run VS Code extension checks from packages/kilo-vscode.")
-  }
-  if (
-    /\b(?:do not|don't|never)\s+(?:run|use)\s+(?:root\s+|the\s+root\s+)?`?bun test`?/i.test(body) ||
-    /\bbun test\b[^\n.]{0,100}\bnot\s+from\s+(?:the\s+)?(?:repo\s+)?root\b/i.test(body)
-  ) {
-    correction("root_bun_test", "Do not run root bun test; run package-level tests instead.")
-  }
-  return ops
-}
-
 export function mergeOps(ops: MemoryOperations.Op[]) {
   const result: MemoryOperations.Op[] = []
   for (const item of ops) {
@@ -595,11 +536,10 @@ export function typedCapture(input: {
   reason?: Reason
   signal: boolean
   interval: boolean
-  inferred: number
 }) {
   const completed = !input.reason || input.reason === "completed"
-  const due = input.signal || input.inferred > 0
-  const fresh = !input.interval || input.inferred > 0
+  const due = input.signal
+  const fresh = !input.interval
   return {
     call: completed && due && fresh,
     work: completed && due && fresh,
@@ -986,7 +926,6 @@ export namespace MemoryCapture {
       .pipe(Effect.catch(() => Effect.succeed([] as Snapshot.FileDiff[])))
     const changed = summarizeDiffs(diffs)
     const durable = hasDurableDiff(diffs)
-    const inferred = inferOps({ user, assistant, changed }).slice(0, state.capture.maxOpsPerRun)
     const completed = !input.reason || input.reason === "completed"
     // Echo = short lookup answered from memory with no file changes. Long recall-assisted answers
     // (research, investigations) carry new content and must still be digested.
@@ -1012,7 +951,7 @@ export namespace MemoryCapture {
         !shouldBypassInterval(user) &&
         !durable,
     )
-    const typed = typedCapture({ reason: input.reason, signal, interval, inferred: inferred.length })
+    const typed = typedCapture({ reason: input.reason, signal, interval })
     const typedCall = state.autoConsolidate && typed.call && !echo
     const typedWork = state.autoConsolidate && typed.work && !echo
 
@@ -1148,13 +1087,6 @@ export namespace MemoryCapture {
           const sessions = yield* Effect.promise(() =>
             MemoryFiles.recentSessions(root, state.limits.maxSessionFiles, state.limits.maxSessionLineChars),
           )
-          const fallback = mergeOps(
-            inferOps({
-              user: recent,
-              assistant: existing,
-              changed,
-            }),
-          ).slice(0, state.capture.maxOpsPerRun)
           const body = cap(
             evidence([
               { title: "existing_memory", body: existing },
@@ -1206,7 +1138,7 @@ export namespace MemoryCapture {
                   }),
                 )
                 yield* Effect.promise(() =>
-                  MemoryFiles.append(root, `consolidate error=${brief(reason, 160)} fallbackOps=${fallback.length}`),
+                  MemoryFiles.append(root, `consolidate error=${brief(reason, 160)}`),
                 )
                 return { ok: false as const, reason }
               }),
@@ -1219,7 +1151,7 @@ export namespace MemoryCapture {
               fallback: true,
               reason: result.reason,
               skipped: [] as z.infer<typeof typedSchema>["skipped"],
-              fallbackOperationCount: fallback.length,
+              fallbackOperationCount: 0,
             }
           }
           const parsed = yield* Effect.try({
@@ -1232,7 +1164,7 @@ export namespace MemoryCapture {
                 yield* Effect.promise(() =>
                   MemoryFiles.append(
                     root,
-                    `consolidate parse_error=${brief(reason, 160)} fallbackOps=${fallback.length}`,
+                    `consolidate parse_error=${brief(reason, 160)}`,
                   ),
                 )
                 return undefined
@@ -1246,7 +1178,7 @@ export namespace MemoryCapture {
               fallback: true,
               reason: "parse_error",
               skipped: [] as z.infer<typeof typedSchema>["skipped"],
-              fallbackOperationCount: fallback.length,
+              fallbackOperationCount: 0,
             }
           }
           const verified = verifySkips({ skipped: parsed.skipped, items })
@@ -1330,7 +1262,7 @@ export namespace MemoryCapture {
           operations: audit(ops),
           files: [...new Set(ops.flatMap((item) => (item.action === "add" && item.file ? [item.file] : [])))],
           summary: generated.fallback
-            ? `typed consolidation fallback skipped ${generated.fallbackOperationCount} inferred ops`
+            ? `typed consolidation skipped after ${generated.reason ?? "model failure"}`
             : count > 0
               ? `typed consolidation saved ${count} ops`
               : `typed consolidation skipped ${generated.skipped.length} candidates`,

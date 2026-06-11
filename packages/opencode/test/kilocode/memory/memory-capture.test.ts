@@ -11,7 +11,6 @@ import {
   fallbackDigest,
   guardReason,
   hasDurableDiff,
-  inferOps,
   isVagueContinuation,
   mergeOps,
   parseDigest,
@@ -384,42 +383,26 @@ describe("memory capture", () => {
   })
 
   test("runs typed consolidation only for completed turns", () => {
-    expect(typedCapture({ reason: "completed", signal: true, interval: false, inferred: 0 })).toEqual({
+    expect(typedCapture({ reason: "completed", signal: true, interval: false })).toEqual({
       call: true,
       work: true,
     })
-    expect(typedCapture({ reason: "completed", signal: false, interval: false, inferred: 1 })).toEqual({
-      call: true,
-      work: true,
-    })
-    expect(typedCapture({ reason: "completed", signal: false, interval: false, inferred: 0 })).toEqual({
+    expect(typedCapture({ reason: "completed", signal: false, interval: false })).toEqual({
       call: false,
       work: false,
     })
-    expect(typedCapture({ reason: "interrupted", signal: true, interval: false, inferred: 1 })).toEqual({
+    expect(typedCapture({ reason: "interrupted", signal: true, interval: false })).toEqual({
       call: false,
       work: false,
     })
-    expect(typedCapture({ reason: "interrupted", signal: false, interval: false, inferred: 0 })).toEqual({
-      call: false,
-      work: false,
-    })
-    expect(typedCapture({ reason: "error", signal: true, interval: false, inferred: 1 })).toEqual({
+    expect(typedCapture({ reason: "error", signal: true, interval: false })).toEqual({
       call: false,
       work: false,
     })
   })
 
-  test("does not let the consolidation interval suppress inferred commands", () => {
-    expect(typedCapture({ reason: "completed", signal: true, interval: true, inferred: 0 })).toEqual({
-      call: false,
-      work: false,
-    })
-    expect(typedCapture({ reason: "completed", signal: false, interval: true, inferred: 1 })).toEqual({
-      call: true,
-      work: true,
-    })
-    expect(typedCapture({ reason: "interrupted", signal: false, interval: true, inferred: 1 })).toEqual({
+  test("consolidation interval suppresses typed capture", () => {
+    expect(typedCapture({ reason: "completed", signal: true, interval: true })).toEqual({
       call: false,
       work: false,
     })
@@ -600,114 +583,8 @@ describe("memory capture", () => {
     ])
   })
 
-  test("infers obvious environment commands without model judgment", () => {
-    expect(
-      inferOps({
-        user: "what commands are needed for setup?",
-        assistant:
-          "Run bun install from the repo root, use bun run dev for dev, and run bun test from packages/opencode. Never run root bun test.",
-      }),
-    ).toEqual([
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Tooling",
-        key: "package_manager",
-        text: "Use Bun for package management and package scripts.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Commands",
-        key: "install_dependencies",
-        text: "Run bun install from the repo root.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Commands",
-        key: "dev_command",
-        text: "Run bun run dev from the repo root.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Commands",
-        key: "cli_tests",
-        text: "Run bun test from packages/opencode for CLI tests.",
-      },
-      {
-        action: "add",
-        file: "corrections.md",
-        section: "Corrections",
-        key: "root_bun_test",
-        text: "Do not run root bun test; run package-level tests instead.",
-      },
-    ])
-  })
 
-  test("infers durable local tooling without model judgment", () => {
-    expect(
-      inferOps({
-        user: "what tooling does this repo use?",
-        assistant:
-          "This workspace uses Bun for package scripts, Turborepo for orchestration, and Java 21 for JetBrains checks.",
-      }),
-    ).toEqual([
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Tooling",
-        key: "package_manager",
-        text: "Use Bun for package management and package scripts.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Tooling",
-        key: "build_orchestration",
-        text: "Use Turborepo/Turbo for workspace orchestration.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Tooling",
-        key: "java_21",
-        text: "Use Java 21 for project checks or tooling that require it.",
-      },
-    ])
-  })
 
-  test("infers setup commands without inventing repo-root location", () => {
-    expect(
-      inferOps({
-        user: "what commands are needed for setup?",
-        assistant: "Use bun install, then bun run dev.",
-      }),
-    ).toEqual([
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Tooling",
-        key: "package_manager",
-        text: "Use Bun for package management and package scripts.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Commands",
-        key: "install_dependencies",
-        text: "Run bun install.",
-      },
-      {
-        action: "add",
-        file: "environment.md",
-        section: "Commands",
-        key: "dev_command",
-        text: "Run bun run dev.",
-      },
-    ])
-  })
 
   test("merges fallback typed operations without duplicates", () => {
     expect(
@@ -750,14 +627,6 @@ describe("memory capture", () => {
     ])
   })
 
-  test("does not infer typed memory from vague continuation work", () => {
-    expect(
-      inferOps({
-        user: "where did we stop?",
-        assistant: "I checked the current task and inspected the worktree.",
-      }),
-    ).toEqual([])
-  })
 
   test("summarizes completed turns within the session memory line budget", () => {
     const text = summarize({
