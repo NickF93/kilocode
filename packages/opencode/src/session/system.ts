@@ -84,6 +84,7 @@ export interface Interface {
     model: Provider.Model,
     editorContext?: EditorContext,
     sessionID?: string,
+    memory?: boolean,
   ) => Effect.Effect<string[]> // kilocode_change
   readonly skills: (agent: Agent.Info) => Effect.Effect<string | undefined>
 }
@@ -101,9 +102,10 @@ export const layer = Layer.effect(
         model: Provider.Model,
         editorContext?: EditorContext,
         sessionID?: string,
+        memory?: boolean, // experimental.memory kill switch
       ) {
         const ctx = yield* InstanceState.context
-        return yield* KilocodeSystemPrompt.environment({ ctx, model, editor: editorContext, sessionID })
+        return yield* KilocodeSystemPrompt.environment({ ctx, model, editor: editorContext, sessionID, memory })
       }),
       // kilocode_change end
 

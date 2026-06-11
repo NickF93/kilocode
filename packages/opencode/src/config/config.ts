@@ -355,6 +355,10 @@ export const Info = Schema.Struct({
       batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
       // kilocode_change start
       codebase_search: Schema.optional(Schema.Boolean).annotate({ description: "Enable AI-powered codebase search" }),
+      memory: Schema.optional(Schema.Boolean).annotate({
+        description:
+          "Kilo project memory (experimental). Off by default per project until /memory enable; set false to disable the feature entirely",
+      }),
       speech_to_text_model: Schema.optional(Schema.String).annotate({
         description: "Speech-to-text transcription model ID to use for voice input",
       }),

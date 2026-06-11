@@ -13,12 +13,17 @@ export namespace KilocodeSystemPrompt {
     model: Provider.Model
     editor?: EditorContext
     sessionID?: string
+    /** experimental.memory kill switch; false suppresses memory injection entirely */
+    memory?: boolean
   }) {
     return Effect.gen(function* () {
-      const project = yield* Effect.tryPromise({
-        try: () => KiloMemory.context({ ctx: input.ctx, sessionID: input.sessionID }),
-        catch: (error) => error,
-      }).pipe(Effect.catch(() => Effect.succeed(undefined)))
+      const project =
+        input.memory === false
+          ? undefined
+          : yield* Effect.tryPromise({
+              try: () => KiloMemory.context({ ctx: input.ctx, sessionID: input.sessionID }),
+              catch: (error) => error,
+            }).pipe(Effect.catch(() => Effect.succeed(undefined)))
       const blocks = project?.blocks ?? []
       return [
         [

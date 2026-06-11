@@ -392,7 +392,8 @@ export namespace KiloMemory {
     if (!MemoryEval.shouldInject()) return false
     const dir = "ctx" in input ? await prepare(input) : root(input)
     const state = await MemoryFiles.readState(dir, scope(input))
-    return state.enabled && state.autoInject
+    // Not gated on autoInject: with injection off, explicit recall is the only way to reach memory.
+    return state.enabled
   }
 
   export async function apply(

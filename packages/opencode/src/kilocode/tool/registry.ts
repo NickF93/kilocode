@@ -98,12 +98,13 @@ export namespace KiloToolRegistry {
       manager: Tool.Def
       process: Tool.Def
     },
-    cfg: { experimental?: { codebase_search?: boolean } },
+    cfg: { experimental?: { codebase_search?: boolean; memory?: boolean } },
   ): Tool.Def[] {
     return [
       ...(cfg.experimental?.codebase_search === true ? [tools.codebase] : []),
       ...(tools.semantic ? [tools.semantic] : []),
-      tools.memory,
+      // experimental.memory === false is the hard kill switch; per-project enable state gates the rest at runtime.
+      ...(cfg.experimental?.memory === false ? [] : [tools.memory]),
       tools.recall,
       ...(Flag.KILO_CLIENT === "cli" || Flag.KILO_CLIENT === "vscode" ? [tools.process] : []),
       // The extension is the only client that can consume the Agent Manager start event.

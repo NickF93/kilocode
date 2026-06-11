@@ -756,14 +756,19 @@ describe("KiloMemory core", () => {
     expect(state.autoConsolidate).toBe(false)
   })
 
-  test("recall tool is unavailable when automatic injection is disabled", async () => {
+  test("recall tool stays available when automatic injection is disabled", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, ".kilo", "memory")
     await KiloMemory.enable({ root })
     await KiloMemory.configure({ root, settings: { autoInject: false } })
 
-    expect(await KiloMemory.toolEnabled({ root })).toBe(false)
+    // With injection off, the explicit tool is the only path to memory; only enabled gates it.
+    expect(await KiloMemory.toolEnabled({ root })).toBe(true)
+    // Auto-recall injection stays off.
     expect(await KiloMemory.recall({ root, query: "what did memory say about tests?" })).toBeUndefined()
+
+    await KiloMemory.disable({ root })
+    expect(await KiloMemory.toolEnabled({ root })).toBe(false)
   })
 
   test("missing or disabled state returns no context blocks", async () => {

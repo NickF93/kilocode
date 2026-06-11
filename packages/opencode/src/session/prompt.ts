@@ -1790,6 +1790,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       let structured: unknown
       let step = 0
       let memoryIntent: KiloSessionPrompt.MemoryIntentApplied | undefined // kilocode_change
+      const memoryAllowed = (yield* config.get()).experimental?.memory !== false // kilocode_change - experimental.memory kill switch
       const session = yield* sessions.get(sessionID).pipe(Effect.orDie)
 
       while (true) {
@@ -1809,7 +1810,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
         // kilocode_change start - enforce explicit memory edits at the actual model-loop boundary
         const intentMessage = latest.userMessage
-        if (step === 0 && intentMessage) {
+        if (memoryAllowed && step === 0 && intentMessage) {
           const result = yield* KiloSessionPrompt.applyMemoryIntent({ ctx, message: intentMessage, sessionID }).pipe(
             Effect.catchCause((cause) =>
               slog.warn("memory intent failed", { sessionID, error: Cause.squash(cause) }),
@@ -2049,7 +2050,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                 result: memoryIntent,
               })
             }
-            if (!memoryIntent) {
+            if (!memoryIntent && memoryAllowed) {
               yield* KiloSessionPrompt.injectMemoryRecall({
                 msgs,
                 lastUser: latest.userMessage as MessageV2.WithParts & { info: MessageV2.User },
@@ -2065,7 +2066,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           // kilocode_change start - persistently prune stale tool outputs when payload is already large
           const [skills, env, instructions] = yield* Effect.all([
             sys.skills(agent),
-            sys.environment(model, lastUser.editorContext, sessionID), // kilocode_change
+            sys.environment(model, lastUser.editorContext, sessionID, memoryAllowed), // kilocode_change
             instruction.system().pipe(Effect.orDie),
           ])
           KiloSessionPrompt.markStartupMemory({ env, cache: memoryCache }) // kilocode_change
@@ -2085,7 +2086,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               if (memoryIntent) {
                 KiloSessionPrompt.injectMemoryIntentResult({ msgs, message: recalled, sessionID, result: memoryIntent })
               }
-              if (!memoryIntent)
+              if (!memoryIntent && memoryAllowed)
                 yield* KiloSessionPrompt.injectMemoryRecall({
                   msgs,
                   lastUser: recalled,
@@ -2226,6 +2227,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       // kilocode_change start - recover stale turns and run memory capture around each turn
       yield* KiloSessionPrompt.recoverDanglingAssistant({ sessionID: input.sessionID, status, sessions })
       yield* KiloSessionPrompt.recoverProviderFinishError({ sessionID: input.sessionID, status, sessions })
+      const memoryAllowed = (yield* config.get()).experimental?.memory !== false // experimental.memory kill switch
       MemoryTurn.open({ sessionID: input.sessionID })
       yield* bus.publish(KiloSession.Event.TurnOpen, { sessionID: input.sessionID })
       return yield* Effect.onExit(
@@ -2244,13 +2246,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             sessionID: input.sessionID,
             reason,
           })
-          yield* MemoryTurn.close({
-            sessionID: input.sessionID,
-            reason,
-            sessions,
-            summary,
-            provider,
-          }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
+          if (memoryAllowed)
+            yield* MemoryTurn.close({
+              sessionID: input.sessionID,
+              reason,
+              sessions,
+              summary,
+              provider,
+            }).pipe(Effect.ignore, Effect.forkIn(scope, { startImmediately: true }))
         }),
       )
       // kilocode_change end
