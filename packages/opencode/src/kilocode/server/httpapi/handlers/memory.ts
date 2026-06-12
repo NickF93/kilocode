@@ -3,12 +3,7 @@ import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi"
 import { InstanceState } from "@/effect/instance-state"
 import { KiloMemory, MemorySchema } from "@/kilocode/memory"
 import { InstanceHttpApi } from "@/server/routes/instance/httpapi/api"
-import {
-  MemoryForgetPayload,
-  MemoryQuery,
-  MemoryRememberPayload,
-  MemorySettingsPayload,
-} from "../groups/memory"
+import { MemoryForgetPayload, MemoryQuery, MemoryRememberPayload } from "../groups/memory"
 
 type ApiState = Omit<MemorySchema.State, "stats"> & {
   stats: Omit<MemorySchema.Stats, "lastInjectedAt" | "lastInjectedSessionID" | "lastConsolidatedAt"> & {
@@ -32,18 +27,6 @@ function state(input: MemorySchema.State): ApiState {
 
 function output<T extends { state: MemorySchema.State }>(input: T): Omit<T, "state"> & { state: ApiState } {
   return { ...input, state: state(input.state) }
-}
-
-function key(text: string) {
-  const slug = text
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "_")
-    .replaceAll(/^_+|_+$/g, "")
-    .split("_")
-    .filter(Boolean)
-    .slice(0, 5)
-    .join("_")
-  return slug || "memory"
 }
 
 function run<T>(fn: () => Promise<T>) {
@@ -86,18 +69,13 @@ export const memoryHandlers = HttpApiBuilder.group(InstanceHttpApi, "memory", (h
     }) {
       const state = yield* InstanceState.context
       return yield* run(() =>
-        KiloMemory.apply({
+        KiloMemory.remember({
           ctx: state,
           sessionID: req.payload.sessionID,
-          ops: [
-            {
-              action: "add",
-              file: req.payload.file,
-              section: req.payload.section,
-              key: req.payload.key ?? key(req.payload.text),
-              text: req.payload.text,
-            },
-          ],
+          file: req.payload.file,
+          section: req.payload.section,
+          key: req.payload.key,
+          text: req.payload.text,
         }),
       )
     })
@@ -108,18 +86,11 @@ export const memoryHandlers = HttpApiBuilder.group(InstanceHttpApi, "memory", (h
     }) {
       const state = yield* InstanceState.context
       return yield* run(() =>
-        KiloMemory.apply({
+        KiloMemory.correct({
           ctx: state,
           sessionID: req.payload.sessionID,
-          ops: [
-            {
-              action: "add",
-              file: "corrections.md",
-              section: "Corrections",
-              key: req.payload.key ?? key(req.payload.text),
-              text: req.payload.text,
-            },
-          ],
+          key: req.payload.key,
+          text: req.payload.text,
         }),
       )
     })
@@ -139,24 +110,6 @@ export const memoryHandlers = HttpApiBuilder.group(InstanceHttpApi, "memory", (h
       return yield* run(() => KiloMemory.purge({ ctx }))
     })
 
-    const settings = Effect.fn("MemoryHttpApi.settings")(function* (req: {
-      query: typeof MemoryQuery.Type
-      payload: typeof MemorySettingsPayload.Type
-    }) {
-      const state = yield* InstanceState.context
-      return output(
-        yield* run(() =>
-          KiloMemory.configure({
-            ctx: state,
-            settings: {
-              autoInject: req.payload.autoInject,
-              autoConsolidate: req.payload.autoConsolidate,
-            },
-          }),
-        ),
-      )
-    })
-
     return handlers
       .handle("status", status)
       .handle("show", show)
@@ -167,6 +120,5 @@ export const memoryHandlers = HttpApiBuilder.group(InstanceHttpApi, "memory", (h
       .handle("correct", correct)
       .handle("forget", forget)
       .handle("purge", purge)
-      .handle("settings", settings)
   }),
 )

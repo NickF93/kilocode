@@ -2,10 +2,17 @@ export namespace MemorySchema {
   export const VERSION = 1
 
   export const Sources = ["project.md", "environment.md", "corrections.md"] as const
-  export const ProjectSources = ["project.md", "environment.md", "corrections.md"] as const
-  export const Topics = ["project", "constraints", "workflow", "environment", "quality", "ui", "integration", "corrections"] as const
+  export const Topics = [
+    "project",
+    "constraints",
+    "workflow",
+    "environment",
+    "quality",
+    "ui",
+    "integration",
+    "corrections",
+  ] as const
 
-  export type Scope = "project"
   export type Source = (typeof Sources)[number]
   export type Topic = (typeof Topics)[number]
 
@@ -41,7 +48,7 @@ export namespace MemorySchema {
   export type State = {
     version: 1
     enabled: boolean
-    scope: Scope
+    scope: "project"
     autoInject: boolean
     autoConsolidate: boolean
     capture: Capture
@@ -109,11 +116,31 @@ export namespace MemorySchema {
     return [...new Set(input.flatMap((item) => topic(item) ?? []))].slice(0, 3)
   }
 
-  export function create(scope: Scope = "project"): State {
+  export function kind(file: Source, section: string) {
+    if (file === "corrections.md") return "correction"
+    if (file === "environment.md") return "environment"
+    const value = section.toLowerCase()
+    if (value.includes("decision")) return "project_decision"
+    if (value.includes("constraint")) return "project_constraint"
+    if (value.includes("question")) return "open_question"
+    return "project_fact"
+  }
+
+  export function recordKind(file: Source, section: string) {
+    if (file === "corrections.md") return "CORRECTION"
+    if (file === "environment.md") return "ENV"
+    const value = section.toLowerCase()
+    if (value.includes("decision")) return "PROJECT_DECISION"
+    if (value.includes("constraint")) return "PROJECT_CONSTRAINT"
+    if (value.includes("question")) return "INFERENCE"
+    return "PROJECT_FACT"
+  }
+
+  export function create(): State {
     return {
       version: VERSION,
       enabled: false,
-      scope,
+      scope: "project",
       autoInject: true,
       autoConsolidate: false,
       capture: { ...capture },
@@ -122,34 +149,23 @@ export namespace MemorySchema {
     }
   }
 
-  export function sources(_scope: Scope = "project") {
-    return ProjectSources
+  export function missing(): State {
+    return { ...create(), enabled: false, autoConsolidate: false }
   }
 
-  export function defaultSource(_scope: Scope = "project"): Source {
-    return "project.md"
-  }
-
-  export function missing(scope: Scope = "project"): State {
-    return { ...create(scope), enabled: false, autoConsolidate: false }
-  }
-
-  export function parse(input: unknown, scope: Scope = "project"): State {
-    const base = create(scope)
+  export function parse(input: unknown): State {
+    const base = create()
     if (!rec(input)) return base
 
     const cap = rec(input.capture) ? input.capture : {}
     const lim = rec(input.limits) ? input.limits : {}
     const stat = rec(input.stats) ? input.stats : {}
     const session = num(lim.maxSessionLineChars, base.limits.maxSessionLineChars)
-    const indexBytes = num(lim.maxProjectIndexBytes, base.limits.maxProjectIndexBytes)
-    const recentSessions = num(lim.maxRecentSessions, base.limits.maxRecentSessions)
-
     return {
       version: VERSION,
       enabled: bool(input.enabled, base.enabled),
-      scope,
-      autoInject: bool(input.autoInject, base.autoInject),
+      scope: "project",
+      autoInject: true,
       autoConsolidate: bool(input.autoConsolidate, base.autoConsolidate),
       capture: {
         mode: "selective",
@@ -157,19 +173,14 @@ export namespace MemorySchema {
         explicit: bool(cap.explicit, base.capture.explicit),
         maxOpsPerRun: Math.max(1, num(cap.maxOpsPerRun, base.capture.maxOpsPerRun)),
         minIntervalMs: num(cap.minIntervalMs, base.capture.minIntervalMs),
-        // Earlier v0 builds stored 15000 as the implicit default; capture now runs on the session model.
-        timeoutMs: num(cap.timeoutMs, base.capture.timeoutMs) === 15_000
-          ? base.capture.timeoutMs
-          : num(cap.timeoutMs, base.capture.timeoutMs),
+        timeoutMs: num(cap.timeoutMs, base.capture.timeoutMs),
       },
       limits: {
-        // Earlier v0 builds stored 4096/3 as implicit defaults. Bump only those implicit values.
-        maxProjectIndexBytes: indexBytes === 4096 ? base.limits.maxProjectIndexBytes : indexBytes,
+        maxProjectIndexBytes: num(lim.maxProjectIndexBytes, base.limits.maxProjectIndexBytes),
         maxSessionFiles: num(lim.maxSessionFiles, base.limits.maxSessionFiles),
-        maxRecentSessions: recentSessions === 3 ? base.limits.maxRecentSessions : recentSessions,
+        maxRecentSessions: num(lim.maxRecentSessions, base.limits.maxRecentSessions),
         maxConsolidationInputBytes: num(lim.maxConsolidationInputBytes, base.limits.maxConsolidationInputBytes),
         maxLineChars: num(lim.maxLineChars, base.limits.maxLineChars),
-        // Earlier v0 builds stored 160 as the digest line default. Bump only that implicit value.
         maxSessionLineChars: session === 160 ? base.limits.maxSessionLineChars : session,
       },
       stats: {

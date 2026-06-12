@@ -35,23 +35,6 @@ async function home<T>(dir: string, fn: () => Promise<T>) {
   }
 }
 
-async function evalMode<T>(mode: string, fn: () => Promise<T>) {
-  const prior = {
-    eval: process.env.KILO_MEMORY_EVAL,
-    mode: process.env.KILO_MEMORY_EVAL_MODE,
-  }
-  process.env.KILO_MEMORY_EVAL = "1"
-  process.env.KILO_MEMORY_EVAL_MODE = mode
-  try {
-    return await fn()
-  } finally {
-    if (prior.eval === undefined) delete process.env.KILO_MEMORY_EVAL
-    if (prior.eval !== undefined) process.env.KILO_MEMORY_EVAL = prior.eval
-    if (prior.mode === undefined) delete process.env.KILO_MEMORY_EVAL_MODE
-    if (prior.mode !== undefined) process.env.KILO_MEMORY_EVAL_MODE = prior.mode
-  }
-}
-
 describe("memory intent", () => {
   test("parses natural remember, forget, and correction requests", () => {
     expect(MemoryIntent.parse("remember that tests run from packages/opencode")).toEqual({
@@ -65,25 +48,28 @@ describe("memory intent", () => {
         },
       ],
     })
-    expect(MemoryIntent.parse('"Remember for this project: CLI memory tests run with bun test ./test/kilocode/memory"'))
-      .toEqual({
-        kind: "remember",
-        ops: [
-          {
-            action: "add",
-            file: "environment.md",
-            key: "cli_tests_run_with_bun_test_test_kilocode",
-            text: "CLI memory tests run with bun test ./test/kilocode/memory",
-          },
-        ],
-      })
+    expect(
+      MemoryIntent.parse('"Remember for this project: CLI memory tests run with bun test ./test/kilocode/memory"'),
+    ).toEqual({
+      kind: "remember",
+      ops: [
+        {
+          action: "add",
+          file: "environment.md",
+          key: "cli_tests_run_with_bun_test_test_kilocode",
+          text: "CLI memory tests run with bun test ./test/kilocode/memory",
+        },
+      ],
+    })
 
     expect(MemoryIntent.parse("forget stale root test command")).toEqual({
       kind: "forget",
       ops: [{ action: "remove", query: "stale root test command" }],
     })
 
-    expect(MemoryIntent.parse("memory about test_command is wrong; actually run bun test from packages/opencode")).toEqual({
+    expect(
+      MemoryIntent.parse("memory about test_command is wrong; actually run bun test from packages/opencode"),
+    ).toEqual({
       kind: "correct",
       ops: [
         { action: "remove", query: "test_command" },
@@ -132,19 +118,20 @@ describe("memory intent", () => {
         },
       ],
     })
-    expect(MemoryIntent.parse("save that feature work should maintain product parity across CLI, VS Code, and JetBrains"))
-      .toEqual({
-        kind: "remember",
-        ops: [
-          {
-            action: "add",
-            file: "project.md",
-            section: "Constraints",
-            key: "feature_work_should_maintain_product_parity_across_cli",
-            text: "feature work should maintain product parity across CLI, VS Code, and JetBrains",
-          },
-        ],
-      })
+    expect(
+      MemoryIntent.parse("save that feature work should maintain product parity across CLI, VS Code, and JetBrains"),
+    ).toEqual({
+      kind: "remember",
+      ops: [
+        {
+          action: "add",
+          file: "project.md",
+          section: "Constraints",
+          key: "feature_work_should_maintain_product_parity_across_cli",
+          text: "feature work should maintain product parity across CLI, VS Code, and JetBrains",
+        },
+      ],
+    })
     expect(MemoryIntent.parse("/save that feature work needs product parity")).toBeUndefined()
     expect(MemoryIntent.parse("remember what command runs CLI tests?")).toBeUndefined()
     expect(MemoryIntent.parse("/remember what command runs CLI tests?")).toBeUndefined()
@@ -242,27 +229,6 @@ describe("memory intent", () => {
     )
 
     expect(result).toEqual({ skipped: true, reason: "disabled" })
-  })
-
-  test("skips natural intent before migration in eval off mode", async () => {
-    await using tmp = await tmpdir()
-    await home(path.join(tmp.path, "home"), async () => {
-      const context = ctx(tmp.path)
-      const old = MemoryPaths.legacyRoot({ ctx: context })
-      const root = MemoryPaths.root({ ctx: context })
-      await KiloMemory.enable({ root: old })
-
-      const result = await evalMode("off", () =>
-        MemoryIntent.apply({
-          ctx: context,
-          message: msg("remember that tests run from packages/opencode"),
-        }),
-      )
-
-      expect(result).toEqual({ skipped: true, reason: "eval_off_capture_disabled" })
-      expect(await Bun.file(MemoryPaths.files(old).state).exists()).toBe(true)
-      expect(await Bun.file(MemoryPaths.files(root).state).exists()).toBe(false)
-    })
   })
 
   test("applies natural correction before the model turn", async () => {

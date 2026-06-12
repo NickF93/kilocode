@@ -2,6 +2,7 @@ import { MemoryFiles } from "./files"
 import { MemoryIndexer } from "./indexer"
 import { MemoryRedact } from "./redact"
 import { MemorySchema } from "./schema"
+import { MemoryShared } from "./shared"
 import { MemoryTopics } from "./topics"
 
 export namespace MemoryOperations {
@@ -103,10 +104,6 @@ export namespace MemoryOperations {
     return weekday(days.indexOf(next[1]), now)
   }
 
-  function valid(scope: MemorySchema.Scope, source: MemorySchema.Source) {
-    return (MemorySchema.sources(scope) as readonly MemorySchema.Source[]).includes(source)
-  }
-
   function heading(input: Add, file = input.file) {
     if (input.section) return input.section
     if (file === "environment.md") return "Commands"
@@ -114,9 +111,9 @@ export namespace MemoryOperations {
     return "Facts"
   }
 
-  function source(scope: MemorySchema.Scope, input: Add) {
+  function source(input: Add) {
     if (input.file) return input.file
-    return MemorySchema.defaultSource(scope)
+    return "project.md"
   }
 
   function insert(input: { text: string; section: string; line: string }) {
@@ -172,8 +169,10 @@ export namespace MemoryOperations {
     return input.ops
       .filter((item) => item.action === "add")
       .map((op) => {
-        const file = source(input.state.scope, op)
-        if (!valid(input.state.scope, file)) throw new Error(`memory source ${file} is not valid for ${input.state.scope}`)
+        const file = source(op)
+        if (!(MemorySchema.Sources as readonly MemorySchema.Source[]).includes(file)) {
+          throw new Error(`memory source ${file} is not valid for project`)
+        }
         const section = heading(op, file)
         const item = line(op, input.max)
         return {
@@ -198,13 +197,7 @@ export namespace MemoryOperations {
   }
 
   function words(input: string) {
-    return [
-      ...new Set(
-        normalized(input)
-          .match(/[a-z0-9][a-z0-9_.-]{2,}/g)
-          ?.filter((item) => !noise.has(item)) ?? [],
-      ),
-    ]
+    return MemoryShared.terms(normalized(input), noise)
   }
 
   function similar(left: string, right: string) {
@@ -238,9 +231,9 @@ export namespace MemoryOperations {
     } satisfies Prepared
   }
 
-  export async function apply(input: { root: string; scope?: MemorySchema.Scope; ops: Op[] }) {
+  export async function apply(input: { root: string; ops: Op[] }) {
     return MemoryFiles.queue(input.root, async () => {
-      const state = await MemoryFiles.readState(input.root, input.scope)
+      const state = await MemoryFiles.readState(input.root)
       if (!state.enabled) throw new Error(`${state.scope} memory is disabled`)
       const max = state.limits.maxLineChars
       const meta = await MemoryFiles.readMetadata(input.root)
@@ -251,7 +244,7 @@ export namespace MemoryOperations {
       let count = 0
       for (const op of ops.filter((item) => item.action === "remove")) {
         const exact = target({ query: op.query, meta })
-        for (const source of MemorySchema.sources(state.scope)) {
+        for (const source of MemorySchema.Sources) {
           const prior = await MemoryFiles.readSource(input.root, source)
           const next = remove(prior, exact.keys)
           removed += next.count
@@ -313,7 +306,7 @@ export namespace MemoryOperations {
     })
   }
 
-  export async function forget(input: { root: string; scope?: MemorySchema.Scope; query: string }) {
-    return apply({ root: input.root, scope: input.scope, ops: [{ action: "remove", query: input.query }] })
+  export async function forget(input: { root: string; query: string }) {
+    return apply({ root: input.root, ops: [{ action: "remove", query: input.query }] })
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { lstat, mkdir, readdir, symlink } from "fs/promises"
+import { lstat, mkdir, readdir, symlink, utimes } from "fs/promises"
 import path from "path"
 import { Global } from "@opencode-ai/core/global"
 import { Bus } from "../../../src/bus"
@@ -291,7 +291,10 @@ describe("KiloMemory core", () => {
       const root = await KiloMemory.prepare({ ctx: context })
       const paths = MemoryPaths.files(root)
       const metadata = JSON.parse(await Filesystem.readText(paths.metadata)) as MemoryFiles.Metadata
-      const decisions = (await Filesystem.readText(paths.decisions)).trim().split("\n").map((line) => JSON.parse(line))
+      const decisions = (await Filesystem.readText(paths.decisions))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
 
       expect(metadata.items["project.md:Facts:api_key"].text).toBe("[redacted]")
       expect(decisions[0].summary).toBe("[redacted]")
@@ -542,7 +545,7 @@ describe("KiloMemory core", () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, ".kilo", "memory")
     await KiloMemory.enable({ root })
-    await KiloMemory.configure({ root, settings: { autoInject: false, autoConsolidate: true } })
+    await KiloMemory.configure({ root, settings: { autoConsolidate: true } })
     await KiloMemory.disable({ root })
 
     const result = await KiloMemory.enable({ root })
@@ -629,6 +632,21 @@ describe("KiloMemory core", () => {
 
     expect(shown.changes).toContain("[redacted]")
     expect(shown.changes).not.toContain(secret)
+  })
+
+  test("stale memory lock is stolen before writing logs", async () => {
+    await using tmp = await tmpdir()
+    const root = path.join(tmp.path, ".kilo", "memory")
+    await KiloMemory.enable({ root })
+    const lock = path.join(root, ".lock")
+    const old = new Date(Date.now() - 60_000)
+    await mkdir(lock)
+    await utimes(lock, old, old)
+
+    await MemoryFiles.append(root, "after stale lock")
+    const shown = await KiloMemory.show({ root })
+
+    expect(shown.changes).toContain("after stale lock")
   })
 
   test("session digests redact secret-like text", async () => {
@@ -738,7 +756,7 @@ describe("KiloMemory core", () => {
     }
   })
 
-  test("settings update injection and consolidation", async () => {
+  test("settings update consolidation", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, ".kilo", "memory")
     await KiloMemory.enable({ root })
@@ -746,26 +764,25 @@ describe("KiloMemory core", () => {
     await KiloMemory.configure({
       root,
       settings: {
-        autoInject: false,
         autoConsolidate: false,
       },
     })
     const state = await MemoryFiles.readState(root)
 
-    expect(state.autoInject).toBe(false)
+    expect(state.autoInject).toBe(true)
     expect(state.autoConsolidate).toBe(false)
   })
 
-  test("recall tool stays available when automatic injection is disabled", async () => {
+  test("legacy paused injection state is normalized to startup context", async () => {
     await using tmp = await tmpdir()
     const root = path.join(tmp.path, ".kilo", "memory")
     await KiloMemory.enable({ root })
-    await KiloMemory.configure({ root, settings: { autoInject: false } })
+    await MemoryFiles.writeState(root, { ...MemorySchema.create(), enabled: true, autoInject: false })
 
-    // With injection off, the explicit tool is the only path to memory; only enabled gates it.
+    const state = await MemoryFiles.readState(root)
+
+    expect(state.autoInject).toBe(true)
     expect(await KiloMemory.toolEnabled({ root })).toBe(true)
-    // Auto-recall injection stays off.
-    expect(await KiloMemory.recall({ root, query: "what did memory say about tests?" })).toBeUndefined()
 
     await KiloMemory.disable({ root })
     expect(await KiloMemory.toolEnabled({ root })).toBe(false)
@@ -941,8 +958,9 @@ describe("KiloMemory core", () => {
     })
 
     expect(events.some((event) => event.sessionID === "ses_memory_event" && event.detail?.type === "saved")).toBe(true)
-    expect(events.find((event) => event.sessionID === "ses_memory_event" && event.detail?.type === "saved")?.detail?.tokens)
-      .toBeUndefined()
+    expect(
+      events.find((event) => event.sessionID === "ses_memory_event" && event.detail?.type === "saved")?.detail?.tokens,
+    ).toBeUndefined()
     const decisions = await MemoryFiles.readDecisions(root)
     expect(decisions).toContain('"trigger":"explicit"')
     expect(decisions).toContain('"sessionID":"ses_memory_event"')
@@ -2062,7 +2080,8 @@ describe("KiloMemory core", () => {
       root,
       sessionID: "ses_setup",
       topic: "Initial Session Setup",
-      summary: "Session started in packages/opencode on branch johnnyeric/kilo-memory-v0-slim-v3. Working tree is currently clean. No tasks have been initiated yet.",
+      summary:
+        "Session started in packages/opencode on branch johnnyeric/kilo-memory-v0-slim-v3. Working tree is currently clean. No tasks have been initiated yet.",
       time: Date.UTC(2026, 0, 1, 0, 3),
     })
 
@@ -2079,7 +2098,9 @@ describe("KiloMemory core", () => {
   test("session digest classifier recognizes empty continuation summaries", () => {
     expect(MemoryDigest.empty("User: i wanna continue Result: I'll inspect the worktree.")).toBe(true)
     expect(
-      MemoryDigest.empty('That session was empty, just another "continue recent work" request with no actual work done.'),
+      MemoryDigest.empty(
+        'That session was empty, just another "continue recent work" request with no actual work done.',
+      ),
     ).toBe(true)
     expect(
       MemoryDigest.empty({

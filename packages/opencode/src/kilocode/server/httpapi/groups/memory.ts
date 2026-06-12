@@ -10,7 +10,6 @@ import { described } from "@/server/routes/instance/httpapi/groups/metadata"
 
 const root = "/memory"
 
-const Scope = Schema.Literal("project")
 const Source = Schema.Literals(["project.md", "environment.md", "corrections.md"])
 export const MemoryQuery = Schema.Struct({
   ...WorkspaceRoutingQueryFields,
@@ -48,7 +47,7 @@ const Stats = Schema.Struct({
 const State = Schema.Struct({
   version: Schema.Literal(1),
   enabled: Schema.Boolean,
-  scope: Scope,
+  scope: Schema.Literal("project"),
   autoInject: Schema.Boolean,
   autoConsolidate: Schema.Boolean,
   capture: Capture,
@@ -102,8 +101,6 @@ const Disable = Schema.Struct({
   state: State,
 })
 
-const Settings = Disable
-
 const Operation = Schema.Struct({
   operationCount: Schema.Finite,
   removed: Schema.Finite,
@@ -128,11 +125,6 @@ export const MemoryForgetPayload = Schema.Struct({
   sessionID: Schema.optional(Schema.String),
 })
 
-export const MemorySettingsPayload = Schema.Struct({
-  autoInject: Schema.optional(Schema.Boolean),
-  autoConsolidate: Schema.optional(Schema.Boolean),
-})
-
 export const MemoryPaths = {
   status: `${root}/status`,
   show: `${root}/show`,
@@ -143,7 +135,6 @@ export const MemoryPaths = {
   correct: `${root}/correct`,
   forget: `${root}/forget`,
   purge: `${root}/purge`,
-  settings: `${root}/settings`,
 } as const
 
 export const MemoryApi = HttpApi.make("memory")
@@ -169,8 +160,7 @@ export const MemoryApi = HttpApi.make("memory")
           OpenApi.annotations({
             identifier: "memory.show",
             summary: "Show memory",
-            description:
-              "Return source memory files, generated index, recent change log, and memory save decisions.",
+            description: "Return source memory files, generated index, recent change log, and memory save decisions.",
           }),
         ),
         HttpApiEndpoint.post("enable", MemoryPaths.enable, {
@@ -251,18 +241,6 @@ export const MemoryApi = HttpApi.make("memory")
             identifier: "memory.purge",
             summary: "Purge memory",
             description: "Delete all project memory files for the active workspace.",
-          }),
-        ),
-        HttpApiEndpoint.patch("settings", MemoryPaths.settings, {
-          query: MemoryQuery,
-          payload: MemorySettingsPayload,
-          success: described(Settings, "Memory settings updated"),
-          error: HttpApiError.BadRequest,
-        }).annotateMerge(
-          OpenApi.annotations({
-            identifier: "memory.settings",
-            summary: "Update memory settings",
-            description: "Update memory injection and consolidation settings for the active workspace.",
           }),
         ),
       )

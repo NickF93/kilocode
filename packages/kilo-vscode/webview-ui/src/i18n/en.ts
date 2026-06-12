@@ -1452,8 +1452,6 @@ export const dict = {
   "settings.context.memory.status.enabled": "Enabled",
   "settings.context.memory.status.enabledTokensOps":
     "Enabled - ~{{session}} startup tokens this session - ~{{tokens}} stored index tokens - last op {{ops}}",
-  "settings.context.memory.status.pausedTokensOps":
-    "Paused - startup context disabled - ~{{tokens}} stored index tokens - last op {{ops}}",
   "settings.context.memory.index.path": "{{path}}/index.kmem",
   "settings.context.memory.index.enable": "Enable memory to create project memory files.",
   "settings.context.memory.inspect": "Inspect",
@@ -1461,14 +1459,12 @@ export const dict = {
   "chat.memory.loading": "Memory...",
   "chat.memory.off": "Memory off",
   "chat.memory.on": "Memory on",
-  "chat.memory.paused": "Memory paused",
   "chat.memory.label": "Memory {{tokens}} startup ctx",
   "chat.memory.status.loading": "Memory status loading",
   "chat.memory.session.tokens": "Startup context this session: {{tokens}} tokens",
   "chat.memory.total.tokens": "Stored index: {{tokens}} tokens",
   "chat.memory.project.enabled": "Project memory enabled",
   "chat.memory.project.disabled": "Project memory disabled",
-  "chat.memory.project.paused": "Project memory enabled, startup context disabled",
   "chat.memory.savedOperations": "Last memory operation: {{count}} ops",
   "chat.memory.inspect": "Inspect memory",
   "chat.memory.remember": "Remember",

@@ -10,7 +10,8 @@ export namespace MemoryDigest {
     /\b(continue|resume|keep going|pick up|where (?:did )?we (?:stop|were)|where are we|recent work|what'?s next)\b/i
   const none =
     /\b(empty session|continuation-only|no substantive|no actual work|no meaningful|no actionable|nothing (?:substantive )?(?:was )?(?:done|changed|happened|saved)|just another|just asked|only asked|asked only)\b/i
-  const prompt = /\bUser:\s+.*\b(continue|resume|keep going|pick up|where (?:did )?we (?:stop|were)|recent work|what'?s next)\b/i
+  const prompt =
+    /\bUser:\s+.*\b(continue|resume|keep going|pick up|where (?:did )?we (?:stop|were)|recent work|what'?s next)\b/i
   const setup = /\b(initial session setup|session started|fresh session)\b/i
   const idle =
     /\b(no tasks? (?:has|have) been (?:started|initiated)|no task started|no tasks? started|ready for (?:the )?next task)\b/i

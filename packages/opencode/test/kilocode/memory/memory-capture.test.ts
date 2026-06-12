@@ -261,38 +261,8 @@ function sessions(messages: MessageV2.WithParts[]): Session.Interface {
   } as unknown as Session.Interface
 }
 
-async function evalOff<T>(fn: () => Promise<T>) {
-  const prior = {
-    eval: process.env.KILO_MEMORY_EVAL,
-    mode: process.env.KILO_MEMORY_EVAL_MODE,
-  }
-  process.env.KILO_MEMORY_EVAL = "0"
-  delete process.env.KILO_MEMORY_EVAL_MODE
-  try {
-    return await fn()
-  } finally {
-    if (prior.eval === undefined) delete process.env.KILO_MEMORY_EVAL
-    if (prior.eval !== undefined) process.env.KILO_MEMORY_EVAL = prior.eval
-    if (prior.mode === undefined) delete process.env.KILO_MEMORY_EVAL_MODE
-    if (prior.mode !== undefined) process.env.KILO_MEMORY_EVAL_MODE = prior.mode
-  }
-}
-
-async function evalMode<T>(mode: string, fn: () => Promise<T>) {
-  const prior = {
-    eval: process.env.KILO_MEMORY_EVAL,
-    mode: process.env.KILO_MEMORY_EVAL_MODE,
-  }
-  process.env.KILO_MEMORY_EVAL = "1"
-  process.env.KILO_MEMORY_EVAL_MODE = mode
-  try {
-    return await fn()
-  } finally {
-    if (prior.eval === undefined) delete process.env.KILO_MEMORY_EVAL
-    if (prior.eval !== undefined) process.env.KILO_MEMORY_EVAL = prior.eval
-    if (prior.mode === undefined) delete process.env.KILO_MEMORY_EVAL_MODE
-    if (prior.mode !== undefined) process.env.KILO_MEMORY_EVAL_MODE = prior.mode
-  }
+async function runCapture<T>(fn: () => Promise<T>) {
+  return fn()
 }
 
 describe("memory capture", () => {
@@ -583,9 +553,6 @@ describe("memory capture", () => {
     ])
   })
 
-
-
-
   test("merges fallback typed operations without duplicates", () => {
     expect(
       mergeOps([
@@ -626,7 +593,6 @@ describe("memory capture", () => {
       },
     ])
   })
-
 
   test("summarizes completed turns within the session memory line budget", () => {
     const text = summarize({
@@ -711,7 +677,7 @@ describe("memory capture", () => {
       assistant: "Use bun install, then bun test ./test/kilocode/memory from packages/opencode.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -730,6 +696,7 @@ describe("memory capture", () => {
     const shown = await KiloMemory.show({ ctx })
 
     expect(result).toMatchObject({ skipped: false, operationCount: 1 })
+    if (!("tokens" in result)) throw new Error("expected capture to save memory")
     expect(result.tokens).toBeGreaterThan(0)
     expect(shown.sources.environment).toContain("cli_memory_tests")
     expect(shown.index).toContain("type=env")
@@ -744,36 +711,6 @@ describe("memory capture", () => {
       topic: "repo setup",
       summary: "Explored repo setup commands. Next step: verify memory tests.",
     })
-  })
-
-  test("eval off mode skips capture before legacy memory migration", async () => {
-    await using tmp = await tmpdir()
-    const sessionID = SessionID.make("ses_eval_off_memory")
-    const ctx = { directory: tmp.path, worktree: tmp.path }
-    const old = MemoryPaths.legacyRoot({ ctx })
-    const root = MemoryPaths.root({ ctx })
-    await KiloMemory.enable({ root: old })
-    const messages = turns({
-      sessionID,
-      user: "remember this should not migrate during eval off",
-      assistant: "This should not be captured.",
-    })
-
-    const result = await evalMode("off", () =>
-      Effect.runPromise(
-        MemoryCapture.turn({
-          sessionID,
-          sessions: sessions(messages),
-          summary,
-          provider: provider(['{"topic":"no","summary":"no"}']),
-          reason: "completed",
-        }).pipe(provideInstance(tmp.path)),
-      ),
-    )
-
-    expect(result).toMatchObject({ skipped: true, reason: "eval_off_capture_disabled" })
-    expect(await Bun.file(MemoryPaths.files(old).state).exists()).toBe(true)
-    expect(await Bun.file(MemoryPaths.files(root).state).exists()).toBe(false)
   })
 
   test("turn-close skips memory-echo turns answered from recall", async () => {
@@ -797,7 +734,7 @@ describe("memory capture", () => {
       },
     ]
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -836,7 +773,7 @@ describe("memory capture", () => {
       },
     ]
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -866,7 +803,7 @@ describe("memory capture", () => {
     })
     const calls: string[] = []
 
-    await evalOff(() =>
+    await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -892,7 +829,7 @@ describe("memory capture", () => {
       assistant: "Use bun install from the repo root.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -925,7 +862,7 @@ describe("memory capture", () => {
       assistant: `The test token is api_key=${secret}.`,
     })
 
-    await evalOff(() =>
+    await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -957,7 +894,7 @@ describe("memory capture", () => {
       assistant: `The token is ${secret}.`,
     })
 
-    await evalOff(() =>
+    await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1023,7 +960,7 @@ describe("memory capture", () => {
     })
     const events: MemoryEvents.Status[] = []
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         Effect.acquireUseRelease(
           Effect.sync(() => Bus.subscribe(MemoryEvents.Status, (event) => events.push(event.properties))),
@@ -1046,6 +983,7 @@ describe("memory capture", () => {
     const shown = await KiloMemory.show({ ctx })
 
     expect(result).toMatchObject({ skipped: false, operationCount: 0 })
+    if (!("tokens" in result)) throw new Error("expected capture analysis to run")
     expect(result.tokens).toBeGreaterThan(0)
     expect(events.some((event) => event.state === "idle" && event.consolidation?.operationCount === 0)).toBe(true)
     expect(events.some((event) => event.detail?.type === "skipped")).toBe(false)
@@ -1068,21 +1006,28 @@ describe("memory capture", () => {
       assistant: "Use bun install from the repo root.",
     })
     const error = Object.assign(new Error("Rate limit exceeded"), { status: 429 })
+    const errors: MemoryEvents.Status[] = []
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
-        MemoryCapture.turn({
-          sessionID,
-          sessions: sessions(messages),
-          summary,
-          provider: failing(error),
-          reason: "completed",
-        }).pipe(provideInstance(tmp.path)),
+        Effect.acquireUseRelease(
+          Effect.sync(() => Bus.subscribe(MemoryEvents.Error, (event) => errors.push(event.properties))),
+          () =>
+            MemoryCapture.turn({
+              sessionID,
+              sessions: sessions(messages),
+              summary,
+              provider: failing(error),
+              reason: "completed",
+            }),
+          (off) => Effect.sync(off),
+        ).pipe(provideInstance(tmp.path)),
       ),
     )
     const shown = await KiloMemory.show({ ctx })
 
     expect(result).toMatchObject({ skipped: false })
+    expect(errors.some((event) => event.state === "error" && event.reason === "rate_limit_guard")).toBe(true)
     expect(shown.decisions).toContain('"reason":"rate_limit_guard"')
     expect(shown.decisions).toContain('"result":"fallback"')
     expect(shown.changes).toContain("digest error=rate_limit_guard")
@@ -1101,7 +1046,7 @@ describe("memory capture", () => {
       assistant: "Use bun install from the repo root.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1146,7 +1091,7 @@ describe("memory capture", () => {
     })
     const started = Date.now()
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1193,7 +1138,7 @@ describe("memory capture", () => {
       assistant: "VS Code unit tests run with bun run test:unit from packages/kilo-vscode.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1238,7 +1183,7 @@ describe("memory capture", () => {
       assistant: "The Effect service test command uses test/lib/effect.ts helpers to provision InstanceState.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1283,7 +1228,7 @@ describe("memory capture", () => {
       assistant: "Feature parity: if implementing a feature in CLI, also consider VS Code and JetBrains parity.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,
@@ -1323,7 +1268,7 @@ describe("memory capture", () => {
       assistant: "PR #10550 is already addressed by merged PR #10594.",
     })
 
-    const result = await evalOff(() =>
+    const result = await runCapture(() =>
       Effect.runPromise(
         MemoryCapture.turn({
           sessionID,

@@ -138,7 +138,7 @@ export const MemoryProvider: ParentComponent = (props) => {
 
   const sessionTokens = (status?: MemoryStatusResponse) => {
     const sid = id()
-    if (!status?.state.enabled || !status.state.autoInject) return 0
+    if (!status?.state.enabled) return 0
     if (!sid || status?.state.stats.lastInjectedSessionID !== sid) return 0
     return status.state.stats.lastInjectedTokens
   }
@@ -154,7 +154,7 @@ export const MemoryProvider: ParentComponent = (props) => {
     pending,
     error,
     enabled: createMemo(() => status()?.state.enabled ?? false),
-    active: createMemo(() => Boolean(status()?.state.enabled && status()?.state.autoInject)),
+    active: createMemo(() => Boolean(status()?.state.enabled)),
     sessionTokens: sessionTotal,
     totalTokens: total,
     refresh,

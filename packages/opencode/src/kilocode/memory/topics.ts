@@ -37,9 +37,18 @@ export namespace MemoryTopics {
 
   const rules: [MemorySchema.Topic, RegExp][] = [
     ["corrections", /\b(correction|wrong|incorrect|stale|mistake|fix memory|not true)\b/i],
-    ["constraints", /\b(always|never|must|should|prefer|avoid|require(?:d|ment)?|constraint|rule|policy|boundary|guard|do not|don't)\b/i],
-    ["environment", /\b(command|commands|setup|install|dependencies|package manager|tool|tooling|toolchain|runtime|local|locally|path|paths|folder|folders|directory|directories|worktree|workspace|script|scripts|dev server)\b/i],
-    ["quality", /\b(test|tests|unit|typecheck|lint|format|check|checks|ci|coverage|regression|flaky|compile|build command|bun run build)\b/i],
+    [
+      "constraints",
+      /\b(always|never|must|should|prefer|avoid|require(?:d|ment)?|constraint|rule|policy|boundary|guard|do not|don't)\b/i,
+    ],
+    [
+      "environment",
+      /\b(command|commands|setup|install|dependencies|package manager|tool|tooling|toolchain|runtime|local|locally|path|paths|folder|folders|directory|directories|worktree|workspace|script|scripts|dev server)\b/i,
+    ],
+    [
+      "quality",
+      /\b(test|tests|unit|typecheck|lint|format|check|checks|ci|coverage|regression|flaky|compile|build command|bun run build)\b/i,
+    ],
     [
       "ui",
       /\b(ui|ux|brand|branding|color|colors|palette|identity|theme|page|frontend|visual|style|design|css|html|solid|react|webview|sidebar|layout|yellow|black|white|red|green|blue|purple|orange|pink|gr[ae]y)\b|#[0-9a-f]{3,8}\b/i,

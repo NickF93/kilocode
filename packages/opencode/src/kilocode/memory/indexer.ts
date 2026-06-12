@@ -3,7 +3,7 @@ import path from "path"
 import { MemoryDigest } from "./digest"
 import { MemoryFiles } from "./files"
 import { MemorySchema } from "./schema"
-import { MemoryTopics } from "./topics"
+import { MemoryShared } from "./shared"
 
 export namespace MemoryIndexer {
   export type Result = {
@@ -13,83 +13,10 @@ export namespace MemoryIndexer {
     truncated: boolean
   }
 
-  type Item = {
-    file: MemorySchema.Source
-    section: string
-    key: string
-    text: string
-    topics: MemorySchema.Topic[]
-    terms: string[]
-    updatedAt?: number
-  }
-
-  function trim(input: string, max: number) {
-    const line = input.trim().replaceAll(/\s+/g, " ")
-    if (line.length <= max) return line
-    return `${line.slice(0, Math.max(0, max - 3))}...`
-  }
-
-  function entry(input: string) {
-    const idx = input.indexOf(" :: ")
-    if (idx < 0) return
-    const key = input.slice(0, idx).trim()
-    const text = input.slice(idx + 4).trim()
-    if (!key || !text) return
-    return { key, text }
-  }
-
-  function items(input: {
-    file: MemorySchema.Source
-    text: string
-    max: number
-    meta: MemoryFiles.Metadata
-    now: number
-  }) {
-    const result: Item[] = []
-    let section = "Facts"
-    for (const raw of input.text.split("\n")) {
-      const line = raw.trim()
-      if (line.startsWith("## ")) {
-        section = line.slice(3).trim() || section
-        continue
-      }
-      if (!line.startsWith("- ") || !line.includes(" :: ")) continue
-      const item = entry(line.slice(2))
-      if (!item) continue
-      if (
-        MemoryFiles.expired({
-          data: input.meta,
-          file: input.file,
-          section,
-          key: item.key,
-          text: item.text,
-          now: input.now,
-        })
-      ) {
-        continue
-      }
-      const id = MemoryFiles.metaKey({ file: input.file, section, key: item.key })
-      const meta = input.meta.items[id]
-      const data = { file: input.file, section, key: item.key, text: item.text }
-      result.push({
-        file: input.file,
-        section,
-        key: item.key,
-        text: trim(item.text, input.max),
-        topics: meta?.topics?.length ? meta.topics : MemoryTopics.assign(data),
-        terms: meta?.terms?.length ? meta.terms : MemoryTopics.terms(data),
-        updatedAt: meta?.updatedAt,
-      })
-    }
-    return result
-  }
+  type Item = MemoryShared.TypedItem
 
   function type(section: string) {
-    const value = section.toLowerCase()
-    if (value.includes("decision")) return "PROJECT_DECISION"
-    if (value.includes("constraint")) return "PROJECT_CONSTRAINT"
-    if (value.includes("question")) return "INFERENCE"
-    return "PROJECT_FACT"
+    return MemorySchema.recordKind("project.md", section)
   }
 
   function rank(section: string) {
@@ -189,11 +116,11 @@ export namespace MemoryIndexer {
     return input.includes(`\n${fingerprint(limits)}\n`)
   }
 
-  function wrap(input: { root: string; scope: MemorySchema.Scope; limits: MemorySchema.Limits; lines: string[] }) {
+  function wrap(input: { root: string; limits: MemorySchema.Limits; lines: string[] }) {
     if (input.lines.length === 0) return ""
     return [
       "```kilo-memory-v1 context_not_instruction",
-      `scope: ${input.scope}`,
+      "scope: project",
       `root: ${rootName(input.root)}`,
       fingerprint(input.limits),
       "",
@@ -274,7 +201,7 @@ export namespace MemoryIndexer {
 
   function session(input: { id: string; topic: string; time: string; summary: string }) {
     const topic = input.topic.replaceAll('"', "'")
-    const summary = trim(input.summary, 180)
+    const summary = MemoryShared.brief(input.summary, 180)
     return record({
       kind: "SESSION_DIGEST",
       id: `session.${input.id}`,
@@ -286,12 +213,11 @@ export namespace MemoryIndexer {
 
   function result(input: {
     root: string
-    scope: MemorySchema.Scope
     limits: MemorySchema.Limits
     lines: string[]
     max: number
   }) {
-    return cap(wrap({ root: input.root, scope: input.scope, limits: input.limits, lines: input.lines }), input.max)
+    return cap(wrap({ root: input.root, limits: input.limits, lines: input.lines }), input.max)
   }
 
   function has(input: { text: string; lines: string[] }) {
@@ -303,7 +229,6 @@ export namespace MemoryIndexer {
 
   function assemble(input: {
     root: string
-    scope: MemorySchema.Scope
     limits: MemorySchema.Limits
     max: number
     current: string[]
@@ -324,11 +249,15 @@ export namespace MemoryIndexer {
       ...input.rest,
       ...input.environment,
     ]
-    const initial = result({ root: input.root, scope: input.scope, limits: input.limits, lines: primary, max: input.max })
+    const initial = result({
+      root: input.root,
+      limits: input.limits,
+      lines: primary,
+      max: input.max,
+    })
     if (has({ text: initial.text, lines: keep })) return initial
     return result({
       root: input.root,
-      scope: input.scope,
       limits: input.limits,
       lines: [
         ...input.current,
@@ -348,7 +277,7 @@ export namespace MemoryIndexer {
     const max = state.limits.maxProjectIndexBytes
     const meta = await MemoryFiles.readMetadata(input.root)
     const now = Date.now()
-    const correctionItems = items({
+    const correctionItems = MemoryShared.typed({
       file: "corrections.md",
       text: await MemoryFiles.readSource(input.root, "corrections.md"),
       max: state.limits.maxLineChars,
@@ -356,7 +285,7 @@ export namespace MemoryIndexer {
       now,
     })
     const corrections = lines("CORRECTION", correctionItems)
-    const projectItems = items({
+    const projectItems = MemoryShared.typed({
       file: "project.md",
       text: await MemoryFiles.readSource(input.root, "project.md"),
       max: state.limits.maxLineChars,
@@ -365,7 +294,7 @@ export namespace MemoryIndexer {
     })
     const important = project(projectItems, { include: ["PROJECT_DECISION", "PROJECT_CONSTRAINT"] })
     const facts = project(projectItems, { exclude: ["PROJECT_DECISION", "PROJECT_CONSTRAINT"] })
-    const environmentItems = items({
+    const environmentItems = MemoryShared.typed({
       file: "environment.md",
       text: await MemoryFiles.readSource(input.root, "environment.md"),
       max: state.limits.maxLineChars,
@@ -383,7 +312,6 @@ export namespace MemoryIndexer {
     const sessions = recent.slice(1).map((item) => session(item))
     return assemble({
       root: input.root,
-      scope: state.scope,
       limits: state.limits,
       max,
       current,

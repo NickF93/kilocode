@@ -153,8 +153,6 @@ import type {
   MemoryRebuildResponses,
   MemoryRememberErrors,
   MemoryRememberResponses,
-  MemorySettingsErrors,
-  MemorySettingsResponses,
   MemoryShowErrors,
   MemoryShowResponses,
   MemoryStatusErrors,
@@ -7520,45 +7518,6 @@ export class Memory extends HeyApiClient {
       url: "/memory/purge",
       ...options,
       ...params,
-    })
-  }
-
-  /**
-   * Update memory settings
-   *
-   * Update memory injection and consolidation settings for the active workspace.
-   */
-  public settings<ThrowOnError extends boolean = false>(
-    parameters?: {
-      directory?: string
-      workspace?: string
-      autoInject?: boolean
-      autoConsolidate?: boolean
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "directory" },
-            { in: "query", key: "workspace" },
-            { in: "body", key: "autoInject" },
-            { in: "body", key: "autoConsolidate" },
-          ],
-        },
-      ],
-    )
-    return (options?.client ?? this.client).patch<MemorySettingsResponses, MemorySettingsErrors, ThrowOnError>({
-      url: "/memory/settings",
-      ...options,
-      ...params,
-      headers: {
-        "Content-Type": "application/json",
-        ...options?.headers,
-        ...params.headers,
-      },
     })
   }
 }

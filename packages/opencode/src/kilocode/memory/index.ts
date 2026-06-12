@@ -8,7 +8,7 @@ import { MemoryOperations } from "./operations"
 import { MemoryPaths } from "./paths"
 import { MemoryRecall } from "./recall"
 import { MemorySchema } from "./schema"
-import { MemoryEval } from "./eval"
+import { MemoryShared } from "./shared"
 
 const log = Log.create({ service: "memory" })
 
@@ -16,19 +16,17 @@ export namespace KiloMemory {
   export type Input =
     | {
         root: string
-        scope?: MemorySchema.Scope
         sessionID?: string
         record?: boolean
       }
     | {
         ctx: MemoryPaths.Ctx
-        scope?: MemorySchema.Scope
         sessionID?: string
         record?: boolean
       }
 
   export type Block = {
-    scope: MemorySchema.Scope
+    scope: "project"
     text: string
     bytes: number
     estimatedTokens: number
@@ -66,7 +64,7 @@ export namespace KiloMemory {
     }
     if (migrated) {
       const has = await Filesystem.exists(paths.state)
-      const state = has ? await MemoryFiles.readState(dir) : { ...MemorySchema.create("project"), enabled: true }
+      const state = has ? await MemoryFiles.readState(dir) : { ...MemorySchema.create(), enabled: true }
       if (!has) await MemoryFiles.writeState(dir, state)
       await MemoryIndexer.rebuild({ root: dir, state }).catch((error: unknown) =>
         log.warn("memory index rebuild after migration failed", { root: dir, error }),
@@ -75,56 +73,20 @@ export namespace KiloMemory {
     return dir
   }
 
-  function scope(input: Input): MemorySchema.Scope {
-    return input.scope ?? "project"
-  }
-
-  function brief(input: string, max: number) {
-    const text = input.trim().replaceAll(/\s+/g, " ")
-    if (text.length <= max) return text
-    return `${text.slice(0, Math.max(0, max - 3))}...`
-  }
-
-  function refs(ops: MemoryOperations.Op[]) {
-    return [
-      ...new Set(
-        ops.flatMap((item) => {
-          if (item.action !== "add" || !item.file) return []
-          return [`${item.file}:${item.key}`]
-        }),
-      ),
-    ]
-  }
-
-  function files(ops: MemoryOperations.Op[]) {
-    return [
-      ...new Set(
-        ops.flatMap((item) => {
-          if (item.action !== "add" || !item.file) return []
-          return [item.file]
-        }),
-      ),
-    ]
-  }
-
-  function audit(ops: MemoryOperations.Op[]) {
-    return ops.map((item) =>
-      item.action === "add"
-        ? {
-            action: item.action,
-            file: item.file,
-            section: item.section,
-            key: item.key,
-          }
-        : {
-            action: item.action,
-            query: brief(item.query, 120),
-          },
-    )
-  }
-
   function saved(input: { added: number; removed: number }) {
     return input.removed > 0 || input.added > 0
+  }
+
+  function key(text: string) {
+    const slug = text
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, "_")
+      .replaceAll(/^_+|_+$/g, "")
+      .split("_")
+      .filter(Boolean)
+      .slice(0, 5)
+      .join("_")
+    return slug || "memory"
   }
 
   function summary(input: { added: number; removed: number; count: number }) {
@@ -138,7 +100,7 @@ export namespace KiloMemory {
   }
 
   function message(input: { ops: MemoryOperations.Op[]; added: number; removed: number; count: number }) {
-    const references = refs(input.ops)
+    const references = MemoryShared.refs(input.ops)
     if (input.added > 0 && input.removed > 0) return `Memory updated · ${input.added} saved, ${input.removed} removed`
     if (input.added > 0) return `Memory saved · ${references.join(", ") || `${input.added} ops`}`
     if (input.removed > 0) return `Memory updated · ${input.removed} removed`
@@ -152,7 +114,7 @@ export namespace KiloMemory {
     sessionID?: string
   }) {
     return MemoryFiles.queue(input.root, async () => {
-      const latest = await MemoryFiles.readState(input.root, input.state.scope)
+      const latest = await MemoryFiles.readState(input.root)
       const next = {
         ...latest,
         stats: {
@@ -170,7 +132,7 @@ export namespace KiloMemory {
 
   export async function status(input: Input) {
     const dir = await prepare(input)
-    const state = await MemoryFiles.readState(dir, scope(input))
+    const state = await MemoryFiles.readState(dir)
     const paths = MemoryPaths.files(dir)
     const index = await MemoryFiles.readIndex(dir)
     return {
@@ -191,7 +153,7 @@ export namespace KiloMemory {
   export async function enable(input: Input) {
     const dir = await prepare(input)
     const id = "ctx" in input ? MemoryPaths.identity({ ctx: input.ctx }) : undefined
-    const state = await MemoryFiles.scaffold(dir, scope(input), id)
+    const state = await MemoryFiles.scaffold(dir, id)
     const index = await MemoryIndexer.rebuild({ root: dir, state })
     await MemoryEvents.publish({
       event: "updated",
@@ -209,7 +171,7 @@ export namespace KiloMemory {
   export async function disable(input: Input) {
     const dir = await prepare(input)
     const result = await MemoryFiles.queue(dir, async () => {
-      const state = await MemoryFiles.readState(dir, scope(input))
+      const state = await MemoryFiles.readState(dir)
       const next = { ...state, enabled: false }
       await MemoryFiles.writeState(dir, next)
       await MemoryFiles.append(dir, `disable ${next.scope} source=command`)
@@ -224,12 +186,12 @@ export namespace KiloMemory {
 
   export async function show(input: Input) {
     const dir = await prepare(input)
-    return MemoryFiles.show(dir, scope(input))
+    return MemoryFiles.show(dir)
   }
 
   export async function rebuild(input: Input) {
     const dir = await prepare(input)
-    const state = await MemoryFiles.readState(dir, scope(input))
+    const state = await MemoryFiles.readState(dir)
     const index = await MemoryIndexer.rebuild({ root: dir, state })
     await MemoryEvents.publish({
       event: "updated",
@@ -246,15 +208,14 @@ export namespace KiloMemory {
 
   export async function configure(
     input: Input & {
-      settings: Partial<Pick<MemorySchema.State, "autoInject" | "autoConsolidate">>
+      settings: Partial<Pick<MemorySchema.State, "autoConsolidate">>
     },
   ) {
     const dir = await prepare(input)
     const result = await MemoryFiles.queue(dir, async () => {
-      const state = await MemoryFiles.readState(dir, scope(input))
+      const state = await MemoryFiles.readState(dir)
       const next = {
         ...state,
-        ...(input.settings.autoInject === undefined ? {} : { autoInject: input.settings.autoInject }),
         ...(input.settings.autoConsolidate === undefined ? {} : { autoConsolidate: input.settings.autoConsolidate }),
       }
       await MemoryFiles.writeState(dir, next)
@@ -262,7 +223,6 @@ export namespace KiloMemory {
         dir,
         [
           `settings ${next.scope}`,
-          input.settings.autoInject === undefined ? "" : `autoInject=${next.autoInject}`,
           input.settings.autoConsolidate === undefined ? "" : `autoConsolidate=${next.autoConsolidate}`,
         ]
           .filter(Boolean)
@@ -279,20 +239,10 @@ export namespace KiloMemory {
 
   export async function context(input: Input) {
     const dir = root(input)
-    if (!MemoryEval.shouldInject()) {
-      MemoryEval.injected({ root: dir, bytes: 0, tokens: 0, truncated: false, ms: 0 })
-      return {
-        root: dir,
-        blocks: [] as Block[],
-        meta: { enabled: false, estimatedTokens: 0, bytes: 0, truncated: false },
-      }
-    }
     const ready = await prepare(input)
-    const started = Date.now()
-    const state = await MemoryFiles.readState(ready, scope(input))
+    const state = await MemoryFiles.readState(ready)
     const record = input.record ?? true
-    if (!state.enabled || !state.autoInject) {
-      MemoryEval.injected({ root: ready, bytes: 0, tokens: 0, truncated: false, ms: Date.now() - started })
+    if (!state.enabled) {
       return {
         root: ready,
         blocks: [] as Block[],
@@ -307,7 +257,7 @@ export namespace KiloMemory {
       prior && !MemoryIndexer.stale(prior) && !expired && MemoryIndexer.fresh(prior, state.limits)
         ? prior
         : (await rebuild(input)).index.text
-    const max = MemoryEval.maxBytes(state.limits.maxProjectIndexBytes)
+    const max = state.limits.maxProjectIndexBytes
     const capped = MemoryIndexer.cap(index, max)
     if (!record) {
       return {
@@ -333,7 +283,6 @@ export namespace KiloMemory {
     }
     if (!capped.text.trim()) {
       const next = await injected({ root: ready, state, index: capped, sessionID: input.sessionID })
-      MemoryEval.injected({ root: ready, bytes: 0, tokens: 0, truncated: false, ms: Date.now() - started })
       await MemoryEvents.publish({
         event: "status",
         payload: MemoryEvents.status({
@@ -351,13 +300,6 @@ export namespace KiloMemory {
       }
     }
     const next = await injected({ root: ready, state, index: capped, sessionID: input.sessionID })
-    MemoryEval.injected({
-      root: ready,
-      bytes: capped.bytes,
-      tokens: capped.tokens,
-      truncated: capped.truncated,
-      ms: Date.now() - started,
-    })
     await MemoryEvents.publish({
       event: "status",
       payload: MemoryEvents.status({
@@ -389,10 +331,8 @@ export namespace KiloMemory {
   }
 
   export async function toolEnabled(input: Input) {
-    if (!MemoryEval.shouldInject()) return false
     const dir = "ctx" in input ? await prepare(input) : root(input)
-    const state = await MemoryFiles.readState(dir, scope(input))
-    // Not gated on autoInject: with injection off, explicit recall is the only way to reach memory.
+    const state = await MemoryFiles.readState(dir)
     return state.enabled
   }
 
@@ -405,8 +345,8 @@ export namespace KiloMemory {
     },
   ) {
     const dir = await prepare(input)
-    const result = await MemoryOperations.apply({ root: dir, scope: scope(input), ops: input.ops })
-    const state = await MemoryFiles.readState(dir, scope(input))
+    const result = await MemoryOperations.apply({ root: dir, ops: input.ops })
+    const state = await MemoryFiles.readState(dir)
     const trigger = input.trigger ?? "explicit"
     const ok = saved({ added: result.added, removed: result.removed })
     if (trigger === "explicit") {
@@ -421,8 +361,8 @@ export namespace KiloMemory {
         tokens: input.tokens ?? 0,
         operationCount: result.operationCount,
         skippedCount: ok ? 0 : 1,
-        operations: audit(input.ops),
-        files: files(input.ops),
+        operations: MemoryShared.audit(input.ops),
+        files: MemoryShared.files(input.ops),
         summary: summary({ added: result.added, removed: result.removed, count: result.operationCount }),
       })
     }
@@ -452,8 +392,8 @@ export namespace KiloMemory {
                   count: result.operationCount,
                 }),
                 operationCount: result.operationCount,
-                sources: refs(input.ops),
-                files: files(input.ops),
+                sources: MemoryShared.refs(input.ops),
+                files: MemoryShared.files(input.ops),
               },
             }
           : {}),
@@ -466,6 +406,36 @@ export namespace KiloMemory {
     return apply({ ...input, ops: [{ action: "remove", query: input.query }] })
   }
 
+  export async function remember(
+    input: Input & {
+      text: string
+      key?: string
+      file?: MemorySchema.Source
+      section?: string
+    },
+  ) {
+    return apply({
+      ...input,
+      ops: [
+        {
+          action: "add",
+          file: input.file,
+          section: input.section,
+          key: input.key ?? key(input.text),
+          text: input.text,
+        },
+      ],
+    })
+  }
+
+  export async function correct(input: Input & { text: string; key?: string }) {
+    return remember({
+      ...input,
+      file: "corrections.md",
+      section: "Corrections",
+    })
+  }
+
   export async function purge(input: Input) {
     const dir = root(input)
     const removed = await MemoryFiles.purge(dir)
@@ -473,7 +443,7 @@ export namespace KiloMemory {
       event: "status",
       payload: MemoryEvents.status({
         root: dir,
-        state: MemorySchema.missing(scope(input)),
+        state: MemorySchema.missing(),
         phase: "idle",
         reason: removed ? "purged" : "missing",
       }),
@@ -482,11 +452,9 @@ export namespace KiloMemory {
   }
 
   export async function recall(input: Input & { query: string; sessionID?: string }) {
-    if (!MemoryEval.shouldInject()) return
     const ready = await prepare(input)
-    const started = Date.now()
-    const state = await MemoryFiles.readState(ready, scope(input))
-    if (!state.enabled || !state.autoInject || !MemoryRecall.shouldRecall(input.query)) return
+    const state = await MemoryFiles.readState(ready)
+    if (!state.enabled || !MemoryRecall.shouldRecall(input.query)) return
     const result = await MemoryRecall.search({
       root: ready,
       query: input.query,
@@ -505,7 +473,7 @@ export namespace KiloMemory {
       parsed: false,
       fallback: false,
       reason: result ? undefined : "no_matches",
-      query: brief(input.query, 240),
+      query: MemoryShared.brief(input.query, 240),
       topics,
       files,
       tokens: result?.tokens ?? 0,
@@ -531,13 +499,6 @@ export namespace KiloMemory {
       })
       return
     }
-    MemoryEval.injected({
-      root: ready,
-      bytes: result.bytes,
-      tokens: result.tokens,
-      truncated: false,
-      ms: Date.now() - started,
-    })
     await MemoryFiles.queue(ready, async () => {
       await MemoryFiles.append(
         ready,
@@ -569,7 +530,7 @@ export namespace KiloMemory {
   ) {
     const dir = await prepare(input)
     return MemoryFiles.queue(dir, async () => {
-      const state = await MemoryFiles.readState(dir, scope(input))
+      const state = await MemoryFiles.readState(dir)
       if (!state.enabled) {
         await MemoryEvents.publish({
           event: "status",
@@ -621,4 +582,3 @@ export { MemoryPaths } from "./paths"
 export { MemoryRecall } from "./recall"
 export { MemorySchema } from "./schema"
 export { MemoryTopics } from "./topics"
-export { MemoryEval } from "./eval"

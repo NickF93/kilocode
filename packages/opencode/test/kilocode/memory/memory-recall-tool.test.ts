@@ -5,12 +5,11 @@ import path from "path"
 import { AppRuntime } from "../../../src/effect/app-runtime"
 import { KiloMemory, MemoryFiles } from "../../../src/kilocode/memory"
 import { MemoryRecallTool } from "../../../src/kilocode/tool/memory-recall"
-import { WithInstance } from "../../../src/project/with-instance"
 import { MessageID, SessionID } from "../../../src/session/schema"
 import { RemoteSender } from "../../../src/kilo-sessions/remote-sender"
 import type { Tool } from "../../../src/tool/tool"
 import { resetDatabase } from "../../fixture/db"
-import { tmpdir } from "../../fixture/fixture"
+import { provideTestInstance, tmpdir } from "../../fixture/fixture"
 
 const watch = process.env.KILO_EXPERIMENTAL_DISABLE_FILEWATCHER
 
@@ -92,7 +91,7 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 0),
       })
 
-      const typed = await WithInstance.provide({
+      const typed = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -100,7 +99,7 @@ describe("kilo_memory_recall", () => {
           return AppRuntime.runPromise(tool.execute({ mode: "typed", query: "vscode unit tests" }, ctx))
         },
       })
-      const digest = await WithInstance.provide({
+      const digest = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -108,7 +107,7 @@ describe("kilo_memory_recall", () => {
           return AppRuntime.runPromise(tool.execute({ mode: "digest", sessionID: "ses_memory_only" }, ctx))
         },
       })
-      const constraint = await WithInstance.provide({
+      const constraint = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -130,7 +129,7 @@ describe("kilo_memory_recall", () => {
       expect(digest.output).toContain("continue memory digest recall")
       expect(digest.output).not.toContain("# Session:")
 
-      const direct = await WithInstance.provide({
+      const direct = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -176,7 +175,7 @@ describe("kilo_memory_recall", () => {
         ],
       })
 
-      const all = await WithInstance.provide({
+      const all = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -184,7 +183,7 @@ describe("kilo_memory_recall", () => {
           return AppRuntime.runPromise(tool.execute({ mode: "catalog" }, ctx))
         },
       })
-      const filtered = await WithInstance.provide({
+      const filtered = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -212,7 +211,7 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 0),
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -246,7 +245,7 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 1),
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -273,7 +272,7 @@ describe("kilo_memory_recall", () => {
         ops: [{ action: "add", key: "cli_tests", text: "Run CLI tests from packages/opencode." }],
       })
 
-      const typed = await WithInstance.provide({
+      const typed = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -281,7 +280,7 @@ describe("kilo_memory_recall", () => {
           return AppRuntime.runPromise(tool.execute({ mode: "typed" }, ctx))
         },
       })
-      const search = await WithInstance.provide({
+      const search = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -310,7 +309,7 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 0),
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -350,7 +349,7 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 1),
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -394,7 +393,7 @@ describe("kilo_memory_recall", () => {
         },
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -450,7 +449,7 @@ describe("kilo_memory_recall", () => {
         },
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
@@ -491,12 +490,14 @@ describe("kilo_memory_recall", () => {
         time: Date.UTC(2026, 0, 1, 0, 0),
       })
 
-      const result = await WithInstance.provide({
+      const result = await provideTestInstance({
         directory: dir.path,
         fn: async () => {
           const info = await AppRuntime.runPromise(MemoryRecallTool)
           const tool = await AppRuntime.runPromise(info.init())
-          return AppRuntime.runPromise(tool.execute({ mode: "search", query: "cli tests catalog recall", limit: 20 }, ctx))
+          return AppRuntime.runPromise(
+            tool.execute({ mode: "search", query: "cli tests catalog recall", limit: 20 }, ctx),
+          )
         },
       })
 

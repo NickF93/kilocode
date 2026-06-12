@@ -1,50 +1,47 @@
 import { describe, expect, it } from "bun:test"
-import { parseMemoryCommand } from "../../webview-ui/src/utils/memory-command"
+import { parseMemoryCommand, type ParsedMemoryCommand } from "../../webview-ui/src/utils/memory-command"
+
+type MemoryOperation = "enable" | "disable" | "rebuild" | "remember" | "correct" | "forget" | "purge"
+type Case = {
+  name: string
+  input: string
+  result: "none" | "inspect" | "operation" | "usage"
+  operation?: MemoryOperation
+  text?: string
+  query?: string
+  reason?: string
+}
+
+const cases = (await Bun.file(
+  new URL("../../../opencode/test/kilocode/memory/memory-command-cases.json", import.meta.url),
+).json()) as Case[]
+
+function expected(item: Case): ParsedMemoryCommand | undefined {
+  if (item.result === "none") return
+  if (item.result === "inspect") return { kind: "inspect" }
+  if (item.result === "usage") return { kind: "usage", reason: item.reason ?? "" }
+  if (!item.operation) throw new Error(`Missing operation for fixture: ${item.name}`)
+  if (item.operation === "remember" || item.operation === "correct") {
+    if (!item.text) throw new Error(`Missing text for fixture: ${item.name}`)
+    return { kind: "operation", operation: item.operation, text: item.text }
+  }
+  if (item.operation === "forget") {
+    if (!item.query) throw new Error(`Missing query for fixture: ${item.name}`)
+    return { kind: "operation", operation: item.operation, query: item.query }
+  }
+  return { kind: "operation", operation: item.operation }
+}
 
 describe("parseMemoryCommand", () => {
-  it("ignores non-memory prompts", () => {
-    expect(parseMemoryCommand("please remember this in normal chat")).toBeUndefined()
-  })
-
-  it("parses inspect commands", () => {
-    expect(parseMemoryCommand("/memory")).toEqual({ kind: "inspect" })
-    expect(parseMemoryCommand("/memory project show")).toEqual({ kind: "inspect" })
-  })
-
-  it("parses memory operations", () => {
-    expect(parseMemoryCommand("/memory remember tests run from packages/opencode")).toEqual({
-      kind: "operation",
-      operation: "remember",
-      text: "tests run from packages/opencode",
-    })
-    expect(parseMemoryCommand("/memory forget stale test command")).toEqual({
-      kind: "operation",
-      operation: "forget",
-      query: "stale test command",
-    })
-    expect(parseMemoryCommand("/memory correct tests run from packages/opencode")).toEqual({
-      kind: "operation",
-      operation: "correct",
-      text: "tests run from packages/opencode",
-    })
-    expect(parseMemoryCommand("/memory purge")).toEqual({
-      kind: "operation",
-      operation: "purge",
-    })
-  })
-
-  it("rejects unsupported commands", () => {
-    expect(parseMemoryCommand("/memory auto-consolidate off")).toEqual({
-      kind: "usage",
-      reason: expect.stringContaining("Unknown memory action"),
-    })
-    expect(parseMemoryCommand("/memory use-personal on")).toEqual({
-      kind: "usage",
-      reason: expect.stringContaining("Personal memory is not supported"),
-    })
-    expect(parseMemoryCommand("/memory personal show")).toEqual({
-      kind: "usage",
-      reason: expect.stringContaining("Personal memory is not supported"),
-    })
+  it("matches shared command fixtures", () => {
+    for (const item of cases) {
+      const parsed = parseMemoryCommand(item.input)
+      if (item.result === "usage") {
+        expect(parsed?.kind, item.name).toBe("usage")
+        expect(parsed && "reason" in parsed ? parsed.reason : "", item.name).toContain(item.reason ?? "")
+        continue
+      }
+      expect(parsed, item.name).toEqual(expected(item))
+    }
   })
 })

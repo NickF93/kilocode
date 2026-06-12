@@ -90,7 +90,6 @@ export const TaskHeader: Component<TaskHeaderProps> = (props) => {
     const status = memory.status()
     if (!status) return memory.loading() ? language.t("chat.memory.loading") : undefined
     if (!status.state.enabled) return language.t("chat.memory.off")
-    if (!status.state.autoInject) return language.t("chat.memory.paused")
     const count = memory.sessionTokens()
     return count > 0 ? language.t("chat.memory.label", { tokens: fmtNum(count) }) : language.t("chat.memory.on")
   })
@@ -111,9 +110,7 @@ export const TaskHeader: Component<TaskHeaderProps> = (props) => {
         <div>
           {!status.state.enabled
             ? language.t("chat.memory.project.disabled")
-            : status.state.autoInject
-              ? language.t("chat.memory.project.enabled")
-              : language.t("chat.memory.project.paused")}
+            : language.t("chat.memory.project.enabled")}
         </div>
         <Show when={ops > 0}>
           <div>

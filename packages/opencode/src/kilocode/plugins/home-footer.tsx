@@ -101,10 +101,9 @@ function Memory(props: { api: TuiPluginApi }) {
   })
   const enabled = createMemo(() => status()?.state.enabled ?? false)
   const tokens = createMemo(() => status()?.index.estimatedTokens ?? 0)
-  const active = createMemo(() => Boolean(status()?.state.enabled && status()?.state.autoInject))
+  const active = createMemo(() => enabled())
   const label = createMemo(() => {
     if (!enabled()) return "off"
-    if (!active()) return "paused"
     return "on"
   })
 

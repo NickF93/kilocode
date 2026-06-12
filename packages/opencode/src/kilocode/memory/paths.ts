@@ -127,7 +127,7 @@ export namespace MemoryPaths {
     return [...new Set([projectLegacyRoot(input), configLegacyRoot(input), named, legacyRoot(input)])]
   }
 
-  export function root(input: { ctx: Ctx; scope?: MemorySchema.Scope }) {
+  export function root(input: { ctx: Ctx }) {
     return path.join(global(), "memory", identity(input).folder)
   }
 

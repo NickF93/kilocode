@@ -1,0 +1,102 @@
+[
+  {
+    "name": "non memory prompt",
+    "input": "please remember this in normal chat",
+    "result": "none"
+  },
+  {
+    "name": "empty memory command opens inspect",
+    "input": "/memory",
+    "result": "inspect"
+  },
+  {
+    "name": "mem alias opens inspect",
+    "input": "/mem show",
+    "result": "inspect"
+  },
+  {
+    "name": "project scope inspect",
+    "input": "/memory project show",
+    "result": "inspect"
+  },
+  {
+    "name": "status opens inspect",
+    "input": "/memory status",
+    "result": "inspect"
+  },
+  {
+    "name": "enable operation",
+    "input": "/memory enable",
+    "result": "operation",
+    "operation": "enable"
+  },
+  {
+    "name": "disable operation",
+    "input": "/memory disable",
+    "result": "operation",
+    "operation": "disable"
+  },
+  {
+    "name": "rebuild operation",
+    "input": "/memory rebuild",
+    "result": "operation",
+    "operation": "rebuild"
+  },
+  {
+    "name": "purge operation",
+    "input": "/memory purge",
+    "result": "operation",
+    "operation": "purge"
+  },
+  {
+    "name": "remember operation keeps text",
+    "input": "/memory remember use bun test from packages/opencode",
+    "result": "operation",
+    "operation": "remember",
+    "text": "use bun test from packages/opencode"
+  },
+  {
+    "name": "correct operation keeps multiline text",
+    "input": "/memory correct old fact is wrong\nnew fact is stable",
+    "result": "operation",
+    "operation": "correct",
+    "text": "old fact is wrong\nnew fact is stable"
+  },
+  {
+    "name": "forget operation keeps query",
+    "input": "/memory forget stale route",
+    "result": "operation",
+    "operation": "forget",
+    "query": "stale route"
+  },
+  {
+    "name": "missing remember text",
+    "input": "/memory remember",
+    "result": "usage",
+    "reason": "Missing text"
+  },
+  {
+    "name": "unsupported auto consolidate",
+    "input": "/memory auto-consolidate off",
+    "result": "usage",
+    "reason": "Unknown memory action"
+  },
+  {
+    "name": "personal scope blocked",
+    "input": "/memory personal show",
+    "result": "usage",
+    "reason": "Personal memory is not supported"
+  },
+  {
+    "name": "personal action blocked",
+    "input": "/memory use-personal on",
+    "result": "usage",
+    "reason": "Personal memory is not supported"
+  },
+  {
+    "name": "unknown action",
+    "input": "/memory wat",
+    "result": "usage",
+    "reason": "Unknown memory action"
+  }
+]

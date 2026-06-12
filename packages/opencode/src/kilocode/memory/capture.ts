@@ -14,8 +14,8 @@ import { Token } from "@/util/token"
 import { ProviderTransform } from "@/provider/transform"
 import { KiloMemory, MemoryEvents, MemoryFiles, MemoryOperations, MemoryPaths, MemorySchema } from "."
 import { MemoryDigest } from "./digest"
-import { MemoryEval } from "./eval"
 import { MemoryRedact } from "./redact"
+import { MemoryShared } from "./shared"
 
 const log = Log.create({ service: "memory.capture" })
 
@@ -274,7 +274,8 @@ const outputs = [
   ),
   /(^|\n)\s*(bun|pnpm|npm|yarn|cargo|go|python|pytest|make)\s+/im,
 ]
-const intent = /\b(remember|save|forget|memory|note that|always|never|actually|correction|correct|wrong|stale|incorrect)\b/i
+const intent =
+  /\b(remember|save|forget|memory|note that|always|never|actually|correction|correct|wrong|stale|incorrect)\b/i
 const durable =
   /(^|\/)(AGENTS\.md|README|docs?\/|package\.json|bun\.lock|pnpm-lock\.yaml|package-lock\.json|turbo\.json|tsconfig[^/]*\.json|vite\.config|eslint|biome|prettier|kilo\.json|\.kilo\/|[^/]*(test|spec|config|command|agent|workflow)[^/]*\.(ts|tsx|js|json|md|yml|yaml))$/i
 const vague = /\b(continue|resume|keep going|pick up|where were we)\b/i
@@ -304,7 +305,7 @@ function hidden(input: string) {
   const text = input.trim().replaceAll(/\s+/g, " ")
   if (!text) return ""
   if (MemoryRedact.has(text)) return "[redacted]"
-  return brief(text, 220)
+  return MemoryShared.brief(text, 220)
 }
 
 function field(input: Record<string, unknown>, key: string) {
@@ -505,38 +506,28 @@ function evidence(sections: { title: string; body?: string }[]) {
   ].join("\n")
 }
 
-function brief(input: string, max: number) {
-  const text = input.trim().replaceAll(/\s+/g, " ")
-  if (text.length <= max) return text
-  return `${text.slice(0, Math.max(0, max - 3))}...`
-}
-
 export function summarize(input: { user: string; assistant: string; max: number }) {
-  const user = brief(MemoryRedact.text(input.user), Math.max(24, Math.floor(input.max * 0.45)))
-  const assistant = brief(MemoryRedact.text(input.assistant), Math.max(24, Math.floor(input.max * 0.45)))
+  const user = MemoryShared.brief(MemoryRedact.text(input.user), Math.max(24, Math.floor(input.max * 0.45)))
+  const assistant = MemoryShared.brief(MemoryRedact.text(input.assistant), Math.max(24, Math.floor(input.max * 0.45)))
   const text = [user ? `User: ${user}` : "", assistant ? `Result: ${assistant}` : ""].filter(Boolean).join(" ")
-  return brief(text, input.max)
+  return MemoryShared.brief(text, input.max)
 }
 
 export function fallbackDigest(input: { prior?: string; summary: string; max: number }) {
-  if (!input.prior?.trim()) return brief(input.summary, input.max)
-  const prior = brief(input.prior ?? "", Math.max(0, Math.floor(input.max * 0.55)))
-  const latest = brief(input.summary, Math.max(0, input.max - prior.length - 9))
-  return brief([prior, latest ? `Latest: ${latest}` : ""].filter(Boolean).join(" "), input.max)
+  if (!input.prior?.trim()) return MemoryShared.brief(input.summary, input.max)
+  const prior = MemoryShared.brief(input.prior ?? "", Math.max(0, Math.floor(input.max * 0.55)))
+  const latest = MemoryShared.brief(input.summary, Math.max(0, input.max - prior.length - 9))
+  return MemoryShared.brief([prior, latest ? `Latest: ${latest}` : ""].filter(Boolean).join(" "), input.max)
 }
 
 export function parseDigest(input: z.infer<typeof digestSchema>, fallback: string, max: number) {
-  const summary = brief(input.summary.trim() || fallback, max)
-  const topic = brief(input.topic.trim() || summary.split(/[.;:]/)[0] || summary, 80)
+  const summary = MemoryShared.brief(input.summary.trim() || fallback, max)
+  const topic = MemoryShared.brief(input.topic.trim() || summary.split(/[.;:]/)[0] || summary, 80)
   if (MemoryDigest.empty({ topic, summary })) return { topic: "", summary: "" }
   return { topic, summary }
 }
 
-export function typedCapture(input: {
-  reason?: Reason
-  signal: boolean
-  interval: boolean
-}) {
+export function typedCapture(input: { reason?: Reason; signal: boolean; interval: boolean }) {
   const completed = !input.reason || input.reason === "completed"
   const due = input.signal
   const fresh = !input.interval
@@ -642,7 +633,7 @@ function detail(input: unknown) {
 }
 
 function errorReason(err: unknown) {
-  if (!(err instanceof Error)) return brief(String(err), 500)
+  if (!(err instanceof Error)) return MemoryShared.brief(String(err), 500)
   const value = err as Error & {
     cause?: unknown
     data?: unknown
@@ -660,7 +651,7 @@ function errorReason(err: unknown) {
     value.response === undefined ? "" : `response=${detail(value.response)}`,
     value.cause === undefined ? "" : `cause=${detail(value.cause)}`,
   ].filter(Boolean)
-  return brief(parts.join(" "), 500)
+  return MemoryShared.brief(parts.join(" "), 500)
 }
 
 export function guardReason(input: string) {
@@ -672,17 +663,7 @@ export function guardReason(input: string) {
 }
 
 function audit(ops: MemoryOperations.Op[]) {
-  return ops.map((item): NonNullable<MemoryFiles.Decision["operations"]>[number] => {
-    if (item.action === "remove") {
-      return { action: "remove", query: item.query }
-    }
-    return {
-      action: "add",
-      file: item.file,
-      section: item.section,
-      key: item.key,
-    }
-  })
+  return MemoryShared.audit(ops) as NonNullable<MemoryFiles.Decision["operations"]>
 }
 
 export function skipped(input: { sessionID: SessionID; reason: string }): MemoryFiles.Decision {
@@ -703,9 +684,8 @@ export function skipped(input: { sessionID: SessionID; reason: string }): Memory
 }
 
 async function typedExisting(root: string) {
-  const files = ["project.md", "environment.md", "corrections.md"] as const
   const blocks = await Promise.all(
-    files.map(async (file) => {
+    MemorySchema.Sources.map(async (file) => {
       const body = (await MemoryFiles.readSource(root, file)).trim()
       if (!body) return ""
       return [`### source ${file}`, body].join("\n")
@@ -732,30 +712,17 @@ type Skip = z.infer<typeof typedSchema>["skipped"][number]
 type SourceItem = { id: string; text: string }
 
 function tokens(input: string) {
-  const found = input
-    .toLowerCase()
-    .match(/[a-z0-9][a-z0-9_.-]{2,}/g)
-    ?.map((item) => item.replaceAll(/[_.-]+/g, "_"))
-    .filter((item) => !common.has(item))
-  return [...new Set(found ?? [])]
+  return MemoryShared.terms(input, common)
 }
 
 function itemSource(file: MemorySchema.Source, text: string) {
-  const result: SourceItem[] = []
-  for (const raw of text.split("\n")) {
-    const match = raw.trim().match(/^-\s*([^:]+?)\s*::\s*(.+)$/)
-    if (!match) continue
-    const key = match[1].trim()
-    const body = match[2].trim()
-    if (!key || !body) continue
-    result.push({ id: `${file}:${key}`, text: `${key} ${body}` })
-  }
-  return result
+  return MemoryShared.source({ file, text })
 }
 
 async function typedItems(root: string) {
-  const files = ["project.md", "environment.md", "corrections.md"] as const
-  const lists = await Promise.all(files.map(async (file) => itemSource(file, await MemoryFiles.readSource(root, file))))
+  const lists = await Promise.all(
+    MemorySchema.Sources.map(async (file) => itemSource(file, await MemoryFiles.readSource(root, file))),
+  )
   return lists.flat()
 }
 
@@ -836,35 +803,13 @@ function skipLine(input: Skip[]) {
   return [reason ? `reason=${reason}` : "", source ? `duplicateOf=${source}` : ""].filter(Boolean).join(" ")
 }
 
-function refs(ops: MemoryOperations.Op[]) {
-  return [
-    ...new Set(
-      ops.flatMap((item) => {
-        if (item.action !== "add" || !item.file) return []
-        return [`${item.file}:${item.key}`]
-      }),
-    ),
-  ]
-}
-
-function files(ops: MemoryOperations.Op[]) {
-  return [
-    ...new Set(
-      ops.flatMap((item) => {
-        if (item.action !== "add" || !item.file) return []
-        return [item.file]
-      }),
-    ),
-  ]
-}
-
 function notice(input: {
   count: number
   ops: MemoryOperations.Op[]
   skipped: Skip[]
   tokens: number
 }): MemoryEvents.Status["detail"] | undefined {
-  const references = refs(input.ops)
+  const references = MemoryShared.refs(input.ops)
   if (input.count > 0) {
     return {
       type: "saved",
@@ -872,7 +817,7 @@ function notice(input: {
       tokens: input.tokens,
       operationCount: input.count,
       sources: references,
-      files: files(input.ops),
+      files: MemoryShared.files(input.ops),
     }
   }
   return undefined
@@ -889,16 +834,27 @@ export namespace MemoryCapture {
     const ctx = yield* InstanceState.context
     const root = MemoryPaths.root({ ctx })
     const started = Date.now()
-    if (!MemoryEval.shouldCapture()) {
-      const reason = `eval_${MemoryEval.mode()}_capture_disabled`
-      MemoryEval.captured({ root, reason })
-      return { skipped: true, reason }
-    }
     yield* Effect.promise(() => KiloMemory.prepare({ ctx }))
     const state = yield* Effect.promise(() => MemoryFiles.readState(root))
+    const reported = new Set<string>()
+    const fail = (reason: string) =>
+      Effect.promise(async () => {
+        const safe = MemoryRedact.text(reason)
+        if (reported.has(safe)) return
+        reported.add(safe)
+        await MemoryEvents.publish({
+          event: "error",
+          payload: MemoryEvents.status({
+            root,
+            state,
+            phase: "error",
+            reason: safe,
+            sessionID: input.sessionID,
+          }),
+        })
+      })
     const skip = (reason: string) =>
       Effect.promise(async () => {
-        MemoryEval.captured({ root, reason, ms: Date.now() - started })
         if (state.enabled) await MemoryFiles.decide(root, skipped({ sessionID: input.sessionID, reason }))
         await MemoryEvents.publish({
           event: "status",
@@ -1024,19 +980,10 @@ export namespace MemoryCapture {
               Effect.gen(function* () {
                 const raw = errorReason(err)
                 const reason = MemoryRedact.text(guardReason(raw) ?? raw)
+                yield* fail(reason)
                 yield* Effect.promise(() =>
-                  MemoryEvents.publish({
-                    event: "error",
-                    payload: MemoryEvents.status({
-                      root,
-                      state,
-                      phase: "error",
-                      reason,
-                      sessionID: input.sessionID,
-                    }),
-                  }),
+                  MemoryFiles.append(root, `digest error=${MemoryShared.brief(reason, 160)} fallback=1`),
                 )
-                yield* Effect.promise(() => MemoryFiles.append(root, `digest error=${brief(reason, 160)} fallback=1`))
                 return { ok: false as const, reason }
               }),
             ),
@@ -1056,8 +1003,9 @@ export namespace MemoryCapture {
             Effect.catch((err: unknown) =>
               Effect.gen(function* () {
                 const reason = MemoryRedact.text(errorReason(err))
+                yield* fail("digest parse_error")
                 yield* Effect.promise(() =>
-                  MemoryFiles.append(root, `digest parse_error=${brief(reason, 160)} fallback=1`),
+                  MemoryFiles.append(root, `digest parse_error=${MemoryShared.brief(reason, 160)} fallback=1`),
                 )
                 return undefined
               }),
@@ -1125,20 +1073,9 @@ export namespace MemoryCapture {
               Effect.gen(function* () {
                 const raw = errorReason(err)
                 const reason = MemoryRedact.text(guardReason(raw) ?? raw)
+                yield* fail(reason)
                 yield* Effect.promise(() =>
-                  MemoryEvents.publish({
-                    event: "error",
-                    payload: MemoryEvents.status({
-                      root,
-                      state,
-                      phase: "error",
-                      reason,
-                      sessionID: input.sessionID,
-                    }),
-                  }),
-                )
-                yield* Effect.promise(() =>
-                  MemoryFiles.append(root, `consolidate error=${brief(reason, 160)}`),
+                  MemoryFiles.append(root, `consolidate error=${MemoryShared.brief(reason, 160)}`),
                 )
                 return { ok: false as const, reason }
               }),
@@ -1161,11 +1098,9 @@ export namespace MemoryCapture {
             Effect.catch((err: unknown) =>
               Effect.gen(function* () {
                 const reason = MemoryRedact.text(errorReason(err))
+                yield* fail("consolidate parse_error")
                 yield* Effect.promise(() =>
-                  MemoryFiles.append(
-                    root,
-                    `consolidate parse_error=${brief(reason, 160)}`,
-                  ),
+                  MemoryFiles.append(root, `consolidate parse_error=${MemoryShared.brief(reason, 160)}`),
                 )
                 return undefined
               }),
@@ -1271,7 +1206,6 @@ export namespace MemoryCapture {
     }
     const tokens = digest.tokens + generated.tokens
     if (!digest.summary && !typedCall && count === 0) return yield* skip("no_ops")
-    MemoryEval.captured({ root, tokens, ops: count, ms: Date.now() - started })
     if (digestDue || typedCall || count > 0) {
       yield* Effect.promise(() =>
         MemoryFiles.queue(root, async () => {

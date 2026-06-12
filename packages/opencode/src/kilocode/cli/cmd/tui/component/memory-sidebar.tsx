@@ -24,14 +24,13 @@ export function MemorySidebar(props: { sessionID: string }) {
   )
   const sessionTokens = () => {
     const state = data()?.state
-    if (!state || !state.enabled || !state.autoInject || state.stats.lastInjectedSessionID !== props.sessionID) return 0
+    if (!state || !state.enabled || state.stats.lastInjectedSessionID !== props.sessionID) return 0
     return state.stats.lastInjectedTokens
   }
   const saveTokens = () => data()?.state.stats.lastConsolidationTokens ?? 0
   const label = () => {
     const state = data()?.state
     if (!state?.enabled) return "project off"
-    if (!state.autoInject) return "project paused"
     return "project on"
   }
 
@@ -57,7 +56,7 @@ export function MemorySidebar(props: { sessionID: string }) {
             <text fg={theme.text}>
               <b>Memory</b>
             </text>
-            <text fg={item().state.enabled && item().state.autoInject ? theme.success : theme.textMuted}>
+            <text fg={item().state.enabled ? theme.success : theme.textMuted}>
               {label()} · startup ctx {fmt(sessionTokens())}
             </text>
             <text fg={theme.textMuted}>

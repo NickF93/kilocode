@@ -4,6 +4,7 @@ import { MemoryDigest } from "./digest"
 import { MemoryFiles } from "./files"
 import { MemoryIndexer } from "./indexer"
 import { MemorySchema } from "./schema"
+import { MemoryShared } from "./shared"
 import { MemoryTopics } from "./topics"
 
 export namespace MemoryRecall {
@@ -106,7 +107,8 @@ export namespace MemoryRecall {
     /\b(recall|remember\s+(what|when|where|how|which)|check\s+(the\s+)?memory|search\s+(the\s+)?memory|look\s+up\s+.*memory|memory\s+(say|said|showed|shows|contain|contains|recorded|exists)|memory\s+about|from memory|in memory about|last session|previous session|earlier session)\b/i
   const memoryTask =
     /\b(memory\s+(?:auto[- ]?recall|auto[- ]?save|feature|implement[a-z]*|indicator|sidebar|status|tokens?|usage)|token count.*sidebar|sidebar.*token count)\b/i
-  const task = /\b(add|build|change|create|debug|design|explore|fix|implement\w*|make|remove|review|run|style|test|update|use|wire|write)\b/i
+  const task =
+    /\b(add|build|change|create|debug|design|explore|fix|implement\w*|make|remove|review|run|style|test|update|use|wire|write)\b/i
   const broad =
     /\b(commands|checks|tasks|tools|tooling|stack|requirements|constraints|files|paths|things|common|what should i know|what do i need)\b/i
   const anchor =
@@ -114,12 +116,7 @@ export namespace MemoryRecall {
   const ask = /\b(where|what|which|when|how|continue|resume|next|pick|back|end|stop)\b/i
 
   function terms(input: string) {
-    const found = input
-      .toLowerCase()
-      .match(/[a-z0-9][a-z0-9_.-]{2,}/g)
-      ?.map((item) => item.replaceAll(/[_.-]+/g, "_"))
-      .filter((item) => !stop.has(item))
-    return [...new Set(found ?? [])]
+    return MemoryShared.terms(input, stop)
   }
 
   function lex(input: string) {
@@ -139,24 +136,6 @@ export namespace MemoryRecall {
     return ask.test(value) && anchor.test(value) && topical.length <= 2
   }
 
-  function type(file: MemorySchema.Source, section: string) {
-    if (file === "corrections.md") return "CORRECTION"
-    if (file === "environment.md") return "ENV"
-    if (section.toLowerCase().includes("decision")) return "PROJECT_DECISION"
-    if (section.toLowerCase().includes("constraint")) return "PROJECT_CONSTRAINT"
-    if (section.toLowerCase().includes("question")) return "INFERENCE"
-    return "PROJECT_FACT"
-  }
-
-  function entry(input: string) {
-    const idx = input.indexOf(" :: ")
-    if (idx < 0) return
-    const key = input.slice(0, idx).trim()
-    const text = input.slice(idx + 4).trim()
-    if (!key || !text) return
-    return { key, text }
-  }
-
   function typed(input: {
     file: MemorySchema.Source
     text: string
@@ -164,41 +143,24 @@ export namespace MemoryRecall {
     meta: MemoryFiles.Metadata
     now: number
   }) {
-    const result: Hit[] = []
-    let section = "Facts"
-    for (const raw of input.text.split("\n")) {
-      const line = raw.trim()
-      if (line.startsWith("## ")) {
-        section = line.slice(3).trim() || section
-        continue
-      }
-      if (!line.startsWith("- ") || !line.includes(" :: ")) continue
-      const item = entry(line.slice(2))
-      if (!item) continue
-      const id = MemoryFiles.metaKey({ file: input.file, section, key: item.key })
-      const meta = input.meta.items[id]
-      if (MemoryFiles.expired({ data: input.meta, file: input.file, section, key: item.key, text: item.text, now: input.now })) {
-        continue
-      }
-      const data = { file: input.file, section, key: item.key, text: item.text }
-      const text = line.slice(2).trim().replaceAll(/\s+/g, " ")
-      result.push({
-        type: "typed",
-        kind: type(input.file, section),
-        source: input.file,
-        text: text.length > input.max ? `${text.slice(0, Math.max(0, input.max - 3))}...` : text,
-        score: 0,
-        topics: meta?.topics?.length ? meta.topics : MemoryTopics.assign(data),
-        current: true,
-        updatedAt: meta?.updatedAt,
-      })
-    }
-    return result
+    return MemoryShared.typed(input).map(
+      (item) =>
+        ({
+          type: "typed",
+          kind: MemorySchema.recordKind(item.file, item.section),
+          source: item.file,
+          text: `${item.key} :: ${item.text}`,
+          score: 0,
+          topics: item.topics,
+          current: true,
+          updatedAt: item.updatedAt,
+        }) satisfies Hit,
+    )
   }
 
   async function typedAll(input: { root: string; state: MemorySchema.State; meta: MemoryFiles.Metadata; now: number }) {
     const rows = await Promise.all(
-      MemorySchema.sources(input.state.scope).map(async (file) =>
+      MemorySchema.Sources.map(async (file) =>
         typed({
           file,
           text: await MemoryFiles.readSource(input.root, file),
@@ -252,9 +214,7 @@ export namespace MemoryRecall {
       input.state.limits.maxSessionFiles,
       input.state.limits.maxSessionLineChars,
     )
-    return items
-      .filter((item) => item.id !== input.currentSessionID && !MemoryDigest.empty(item))
-      .map(digest)
+    return items.filter((item) => item.id !== input.currentSessionID && !MemoryDigest.empty(item)).map(digest)
   }
 
   function score(input: { hit: Hit; terms: string[]; query: string; topics: MemorySchema.Topic[] }) {
@@ -327,9 +287,7 @@ export namespace MemoryRecall {
       ...input.hits.flatMap((hit) => [
         `record id=${safe(`${hit.source}:${hit.kind}:${hit.text.slice(0, 32)}`)} type=${safe(hit.kind.toLowerCase())} source=${safe(hit.source)}${
           hit.topics?.length ? ` topics=${hit.topics.map(safe).join(",")}` : ""
-        } updated=${
-          hit.updatedAt ? new Date(hit.updatedAt).toISOString() : "unknown"
-        }`,
+        } updated=${hit.updatedAt ? new Date(hit.updatedAt).toISOString() : "unknown"}`,
         `text: ${body(hit.text)}`,
       ]),
       "```",
@@ -404,7 +362,7 @@ export namespace MemoryRecall {
   }): Promise<Result | undefined> {
     if (!input.force && !shouldRecall(input.query)) return
     const state = input.state ?? (await MemoryFiles.readState(input.root))
-    if (!state.enabled || !state.autoInject) return
+    if (!state.enabled) return
     const query = input.query.trim()
     const mode = input.mode ?? "search"
     const topics = MemoryTopics.match(query)

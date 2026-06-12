@@ -1425,6 +1425,7 @@ export type Config = {
     disable_paste_summary?: boolean
     batch_tool?: boolean
     codebase_search?: boolean
+    memory?: boolean
     speech_to_text_model?: string
     openTelemetry?: boolean
     primary_tools?: Array<string>
@@ -9461,72 +9462,6 @@ export type MemoryPurgeResponses = {
 }
 
 export type MemoryPurgeResponse = MemoryPurgeResponses[keyof MemoryPurgeResponses]
-
-export type MemorySettingsData = {
-  body?: {
-    autoInject?: boolean
-    autoConsolidate?: boolean
-  }
-  path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/memory/settings"
-}
-
-export type MemorySettingsErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type MemorySettingsError = MemorySettingsErrors[keyof MemorySettingsErrors]
-
-export type MemorySettingsResponses = {
-  /**
-   * Memory settings updated
-   */
-  200: {
-    root: string
-    state: {
-      version: 1
-      enabled: boolean
-      scope: "project"
-      autoInject: boolean
-      autoConsolidate: boolean
-      capture: {
-        mode: "selective"
-        turnClose: boolean
-        explicit: boolean
-        maxOpsPerRun: number
-        minIntervalMs: number
-        timeoutMs: number
-      }
-      limits: {
-        maxProjectIndexBytes: number
-        maxSessionFiles: number
-        maxRecentSessions: number
-        maxConsolidationInputBytes: number
-        maxLineChars: number
-        maxSessionLineChars: number
-      }
-      stats: {
-        lastInjectedAt: number
-        lastInjectedBytes: number
-        lastInjectedTokens: number
-        lastInjectedSessionID: string
-        lastConsolidatedAt: number
-        lastConsolidationCost: number
-        lastConsolidationTokens: number
-        lastOperationCount: number
-      }
-    }
-  }
-}
-
-export type MemorySettingsResponse = MemorySettingsResponses[keyof MemorySettingsResponses]
 
 export type NetworkListData = {
   body?: never

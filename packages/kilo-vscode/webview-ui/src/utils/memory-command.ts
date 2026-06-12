@@ -56,6 +56,8 @@ function blocked(verb: string): ParsedMemoryCommand | undefined {
 }
 
 export function parseMemoryCommand(input: string): ParsedMemoryCommand | undefined {
+  // Keep command semantics aligned with packages/opencode/src/kilocode/cli/cmd/tui/memory-command.ts.
+  // Shared cases live in packages/opencode/test/kilocode/memory/memory-command-cases.json.
   const match = input.trim().match(/^\/(?:memory|mem)(?:\s+([\s\S]*))?$/i)
   if (!match) return
   const body = (match[1] ?? "").trim()

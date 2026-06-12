@@ -129,7 +129,7 @@ async function catalog(input: { root: string; query: string }) {
   const lines: string[] = []
   const files: string[] = []
   let count = 0
-  for (const file of MemorySchema.sources()) {
+  for (const file of MemorySchema.Sources) {
     const text = await MemoryFiles.readSource(input.root, file)
     let section = "Facts"
     const rows: string[] = []

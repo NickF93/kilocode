@@ -168,20 +168,6 @@ export const kiloScenarios: Scenario[] = [
       check(body.state.enabled === true, "rebuild should preserve enabled state")
     }),
   http.protected
-    .patch("/memory/settings", "memory.settings")
-    .mutating()
-    .seeded(enable)
-    .at((ctx) => ({
-      path: "/memory/settings",
-      headers: ctx.headers(),
-      body: { autoConsolidate: false },
-    }))
-    .json(200, (body) => {
-      object(body)
-      object(body.state)
-      check(body.state.autoConsolidate === false, "settings should update auto consolidation")
-    }),
-  http.protected
     .post("/memory/remember", "memory.remember")
     .mutating()
     .seeded(enable)

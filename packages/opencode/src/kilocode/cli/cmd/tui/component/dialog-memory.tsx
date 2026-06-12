@@ -192,7 +192,7 @@ export function DialogMemory() {
                     {item().state.enabled ? "Enabled" : "Disabled"} · {item().state.scope}
                   </text>
                   <text fg={theme.textMuted}>{item().root.replace(Global.Path.home, "~")}</text>
-                  <text fg={theme.textMuted}>startup context {item().state.autoInject ? "on" : "paused"}</text>
+                  <text fg={theme.textMuted}>startup context on</text>
                   <text fg={theme.textMuted}>
                     last startup context {item().state.stats.lastInjectedTokens.toLocaleString()} tokens · stored index{" "}
                     {item().index.length.toLocaleString()} chars

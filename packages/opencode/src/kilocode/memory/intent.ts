@@ -1,7 +1,6 @@
 import type { MessageV2 } from "@/session/message-v2"
 import { KiloMemory } from "."
 import { MemoryFiles } from "./files"
-import { MemoryEval } from "./eval"
 import { MemoryOperations } from "./operations"
 import { MemoryPaths } from "./paths"
 import type { MemorySchema } from "./schema"
@@ -24,7 +23,8 @@ export namespace MemoryIntent {
   const correctionLead = /^correction[\s:,-]+/i
   const require = /^\s*always\b[\s:,-]+([\s\S]+)$/i
   const deny = /^\s*never\b[\s:,-]+([\s\S]+)$/i
-  const constraint = /\b(always|must|should|prefer|avoid|never)\b|^when\b[\s\S]+\b(add|run|use|avoid|prefer|keep|do not|don't)\b/i
+  const constraint =
+    /\b(always|must|should|prefer|avoid|never)\b|^when\b[\s\S]+\b(add|run|use|avoid|prefer|keep|do not|don't)\b/i
   // Prohibitions route to corrections.md like "never ..." does: corrections always survive index truncation,
   // while the env path heuristic would bury "not to touch <path>" in environment.md (lowest index priority).
   const prohibition =
@@ -34,7 +34,19 @@ export namespace MemoryIntent {
     /\b(?:memory|remembered(?:\s+fact)?|stored(?:\s+fact)?)(?:\s+(?:about|for|that))?\s+(.+?)\s+(?:is|was|seems|looks)?\s*(?:wrong|incorrect|stale|outdated)\b/i
   const env =
     /\b(package manager|test command|tests? run|build command|dev command|local|remote|outside the repo|sibling repos?|workspace|directory|path)\b|~\/|\/Users\//i
-  const colors = ["yellow", "black", "white", "red", "green", "blue", "purple", "orange", "pink", "gray", "grey"] as const
+  const colors = [
+    "yellow",
+    "black",
+    "white",
+    "red",
+    "green",
+    "blue",
+    "purple",
+    "orange",
+    "pink",
+    "gray",
+    "grey",
+  ] as const
   const color = /\b(yellow|black|white|red|green|blue|purple|orange|pink|gr[ae]y)\b|#[0-9a-f]{3,8}\b/i
   const kilo = /\bkilo(?:code)?\b/i
   const noise = new Set([
@@ -253,13 +265,11 @@ export namespace MemoryIntent {
   export async function apply(input: { ctx: MemoryPaths.Ctx; message: MessageV2.WithParts; sessionID?: string }) {
     const parsed = parse(text(input.message.parts))
     if (!parsed || parsed.ops.length === 0) return { skipped: true, reason: "no_intent" }
-    if (!MemoryEval.shouldCapture()) return { skipped: true, reason: `eval_${MemoryEval.mode()}_capture_disabled` }
     const root = await KiloMemory.prepare({ ctx: input.ctx })
     const state = await MemoryFiles.readState(root)
     if (!state.enabled || !state.capture.explicit) return { skipped: true, reason: "disabled" }
     const id = `${root}:${input.message.info.id}`
     if (applied.has(id)) return { skipped: true, reason: "duplicate" }
-    const started = Date.now()
     const result = await KiloMemory.apply({
       ctx: input.ctx,
       ops: parsed.ops,
@@ -267,7 +277,6 @@ export namespace MemoryIntent {
       sessionID: input.sessionID,
     })
     mark(id)
-    MemoryEval.captured({ root, ops: result.operationCount, ms: Date.now() - started })
     await MemoryFiles.append(root, `intent kind=${parsed.kind} ops=${result.operationCount}`)
     return { skipped: false, kind: parsed.kind, operationCount: result.operationCount }
   }

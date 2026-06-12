@@ -59,7 +59,6 @@ const ContextTab: Component = () => {
     const tokens = status.index.estimatedTokens.toLocaleString(language.locale())
     const session = memory.sessionTokens().toLocaleString(language.locale())
     const ops = status.state.stats.lastOperationCount.toLocaleString(language.locale())
-    if (!status.state.autoInject) return language.t("settings.context.memory.status.pausedTokensOps", { tokens, ops })
     return language.t("settings.context.memory.status.enabledTokensOps", { session, tokens, ops })
   }
 

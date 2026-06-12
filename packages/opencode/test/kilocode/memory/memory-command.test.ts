@@ -1,52 +1,47 @@
 import { describe, expect, test } from "bun:test"
 import type { KiloClient } from "@kilocode/sdk/v2"
-import { parseMemoryInput, runMemoryCommand } from "../../../src/kilocode/cli/cmd/tui/memory-command"
+import { parseMemoryInput, runMemoryCommand, type MemoryCommand } from "../../../src/kilocode/cli/cmd/tui/memory-command"
+
+type MemoryOperation = "enable" | "disable" | "rebuild" | "remember" | "correct" | "forget" | "purge"
+type Case = {
+  name: string
+  input: string
+  result: "none" | "inspect" | "operation" | "usage"
+  operation?: MemoryOperation
+  text?: string
+  query?: string
+  reason?: string
+}
+
+const cases = (await Bun.file(new URL("./memory-command-cases.json", import.meta.url)).json()) as Case[]
+
+function expected(item: Case): MemoryCommand | undefined {
+  if (item.result === "none") return
+  if (item.result === "inspect") return { kind: "inspect" }
+  if (item.result === "usage") return { kind: "usage", reason: item.reason ?? "" }
+  if (!item.operation) throw new Error(`Missing operation for fixture: ${item.name}`)
+  if (item.operation === "remember" || item.operation === "correct") {
+    if (!item.text) throw new Error(`Missing text for fixture: ${item.name}`)
+    return { kind: "operation", operation: item.operation, text: item.text }
+  }
+  if (item.operation === "forget") {
+    if (!item.query) throw new Error(`Missing query for fixture: ${item.name}`)
+    return { kind: "operation", operation: item.operation, query: item.query }
+  }
+  return { kind: "operation", operation: item.operation }
+}
 
 describe("memory TUI command parser", () => {
-  test("parses management commands", () => {
-    expect(parseMemoryInput("/memory")).toEqual({ action: "show" })
-    expect(parseMemoryInput("/mem show")).toEqual({ action: "show" })
-    expect(parseMemoryInput("/memory enable")).toEqual({ action: "enable" })
-    expect(parseMemoryInput("/memory disable")).toEqual({ action: "disable" })
-    expect(parseMemoryInput("/memory rebuild")).toEqual({ action: "rebuild" })
-    expect(parseMemoryInput("/memory status")).toEqual({ action: "show" })
-    expect(parseMemoryInput("/memory inspect")).toEqual({ action: "show" })
-    expect(parseMemoryInput("/memory project show")).toEqual({ action: "show", scope: "project" })
-    expect(parseMemoryInput("/memory purge")).toEqual({ action: "purge" })
-  })
-
-  test("preserves explicit memory text", () => {
-    expect(parseMemoryInput("/memory remember use bun test from packages/opencode")).toEqual({
-      action: "remember",
-      text: "use bun test from packages/opencode",
-    })
-    expect(parseMemoryInput("/memory correct old fact is wrong\nnew fact is stable")).toEqual({
-      action: "correct",
-      text: "old fact is wrong\nnew fact is stable",
-    })
-    expect(parseMemoryInput("/memory forget stale route")).toEqual({ action: "forget", text: "stale route" })
-  })
-
-  test("rejects incomplete and non-memory input", () => {
-    expect(parseMemoryInput("remember this")).toBeUndefined()
-    expect(parseMemoryInput("/memory remember")).toEqual({ action: "usage", reason: "Missing text." })
-    expect(parseMemoryInput("/memory auto-consolidate off")).toEqual({
-      action: "usage",
-      reason: "Unknown memory action: auto-consolidate",
-    })
-    expect(parseMemoryInput("/memory personal show")).toEqual({
-      action: "usage",
-      reason: "Personal memory is not supported in v0.",
-    })
-    expect(parseMemoryInput("/memory use-personal on")).toEqual({
-      action: "usage",
-      reason: "Personal memory is not supported in v0.",
-    })
-    expect(parseMemoryInput("/memory catalog")).toEqual({
-      action: "usage",
-      reason: "Unknown memory action: catalog",
-    })
-    expect(parseMemoryInput("/memory wat")).toEqual({ action: "usage", reason: "Unknown memory action: wat" })
+  test("matches shared command fixtures", () => {
+    for (const item of cases) {
+      const parsed = parseMemoryInput(item.input)
+      if (item.result === "usage") {
+        expect(parsed?.kind, item.name).toBe("usage")
+        expect(parsed && "reason" in parsed ? parsed.reason : "", item.name).toContain(item.reason ?? "")
+        continue
+      }
+      expect(parsed, item.name).toEqual(expected(item))
+    }
   })
 
   test("manual mutation toasts match server event wording", async () => {

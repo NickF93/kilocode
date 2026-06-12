@@ -1,12 +1,10 @@
 import { Cause, Effect } from "effect"
 import * as Log from "@opencode-ai/core/util/log"
-import { InstanceState } from "@/effect/instance-state"
 import type { Provider } from "@/provider/provider"
 import type { Session } from "@/session/session"
 import type { SessionSummary } from "@/session/summary"
 import type { SessionID } from "@/session/schema"
 import { MemoryCapture } from "./capture"
-import { MemoryEval } from "./eval"
 
 const log = Log.create({ service: "memory.turn" })
 
@@ -19,9 +17,7 @@ function brief(cause: Cause.Cause<unknown>) {
 export namespace MemoryTurn {
   export type Reason = "completed" | "error" | "interrupted"
 
-  export function open(input: { sessionID: SessionID }) {
-    MemoryEval.open(input)
-  }
+  export function open(_input: { sessionID: SessionID }) {}
 
   export const close = Effect.fn("MemoryTurn.close")(function* (input: {
     sessionID: SessionID
@@ -31,7 +27,6 @@ export namespace MemoryTurn {
     provider: Provider.Interface
   }) {
     yield* Effect.gen(function* () {
-      const ctx = yield* InstanceState.context
       const info = yield* input.sessions.get(input.sessionID).pipe(
         Effect.catchCause((cause) =>
           Effect.sync(() => {
@@ -48,21 +43,8 @@ export namespace MemoryTurn {
         provider: input.provider,
         reason: input.reason,
       }).pipe(Effect.catchCause((cause) => Effect.sync(() => MemoryCapture.report(cause))))
-      if (MemoryEval.active()) {
-        const messages = yield* input.sessions.messages({ sessionID: input.sessionID })
-        yield* Effect.promise(() =>
-          MemoryEval.close({
-            ctx,
-            sessionID: input.sessionID,
-            reason: input.reason,
-            messages,
-          }),
-        )
-      }
     }).pipe(
-      Effect.catchCause((cause) =>
-        Effect.sync(() => log.warn("memory turn-close hook failed", { err: brief(cause) })),
-      ),
+      Effect.catchCause((cause) => Effect.sync(() => log.warn("memory turn-close hook failed", { err: brief(cause) }))),
     )
   })
 }

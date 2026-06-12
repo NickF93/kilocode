@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks"
-import { appendFile, chmod, cp, lstat, mkdir, readdir, rm, stat as follow, unlink } from "fs/promises"
+import { appendFile, chmod, cp, lstat, mkdir, readdir, rename, rm, stat as follow, unlink } from "fs/promises"
 import path from "path"
 import * as Log from "@opencode-ai/core/util/log"
 import { Filesystem } from "@/util/filesystem"
@@ -190,7 +190,16 @@ export namespace MemoryFiles {
         const info = await guard(file)
         if (!info?.isDirectory()) throw new Error(`memory lock is not a directory: ${file}`)
         if (Date.now() - info.mtimeMs > STALE) {
-          await rm(file, { recursive: true, force: true })
+          const stolen = `${file}.steal.${process.pid}.${Date.now()}`
+          await rename(file, stolen).catch(async (err: unknown) => {
+            if (code(err) === "ENOENT") return
+            if (code(err) === "EEXIST") {
+              await Bun.sleep(50)
+              return
+            }
+            throw err
+          })
+          await rm(stolen, { recursive: true, force: true })
           return acquire(left)
         }
         if (left <= 0) throw new Error(`timed out waiting for memory lock: ${root}`)
@@ -337,9 +346,7 @@ export namespace MemoryFiles {
       throw error
     })
     const copied = await Promise.all(
-      files
-        .filter((file) => file.endsWith(".md"))
-        .map((file) => copyText(path.join(src, file), path.join(dst, file))),
+      files.filter((file) => file.endsWith(".md")).map((file) => copyText(path.join(src, file), path.join(dst, file))),
     )
     return copied.some(Boolean)
   }
@@ -440,13 +447,13 @@ export namespace MemoryFiles {
     return true
   }
 
-  export async function readState(root: string, scope: MemorySchema.Scope = "project") {
+  export async function readState(root: string) {
     const file = MemoryPaths.files(root).state
     const data = await json(file).catch(async (error: unknown) => {
       if (miss(error)) return undefined
       if (parse(error)) {
         await backup(file)
-        const state = MemorySchema.missing(scope)
+        const state = MemorySchema.missing()
         await writeState(root, state)
         await append(root, `recover state.json error=${brief(error)}`).catch((err: unknown) =>
           log.warn("failed to audit memory state recovery", { err, root }),
@@ -455,8 +462,8 @@ export namespace MemoryFiles {
       }
       throw error
     })
-    if (data === undefined) return MemorySchema.missing(scope)
-    return MemorySchema.parse(data, scope)
+    if (data === undefined) return MemorySchema.missing()
+    return MemorySchema.parse(data)
   }
 
   export async function writeState(root: string, state: MemorySchema.State) {
@@ -475,7 +482,8 @@ export namespace MemoryFiles {
     if (typeof input !== "object" || input === null || Array.isArray(input)) return { version: 1, items: {} }
     const items = "items" in input && typeof input.items === "object" && input.items !== null ? input.items : {}
     const result: Metadata["items"] = {}
-    const stamp = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : Date.now())
+    const stamp = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : Date.now()
     for (const [id, value] of Object.entries(items)) {
       if (typeof value !== "object" || value === null || Array.isArray(value)) continue
       const item = value as Partial<ItemMeta>
@@ -585,6 +593,7 @@ export namespace MemoryFiles {
       line(
         MemoryPaths.files(root).decisions,
         `${JSON.stringify({
+          v: 1,
           time: new Date().toISOString(),
           ...data,
         })}\n`,
@@ -593,10 +602,12 @@ export namespace MemoryFiles {
   }
 
   export async function readDecisions(root: string) {
-    return read(MemoryPaths.files(root).decisions).then((text) => text ?? "").catch((error: unknown) => {
-      if (miss(error)) return ""
-      throw error
-    })
+    return read(MemoryPaths.files(root).decisions)
+      .then((text) => text ?? "")
+      .catch((error: unknown) => {
+        if (miss(error)) return ""
+        throw error
+      })
   }
 
   async function mtime(file: string) {
@@ -616,10 +627,14 @@ export namespace MemoryFiles {
       paths.environment,
       paths.corrections,
       paths.metadata,
-      ...(await readdir(paths.sessions).catch((error: unknown) => {
-        if (miss(error)) return [] as string[]
-        throw error
-      })).map((file) => path.join(paths.sessions, file)).filter((file) => file.endsWith(".md")),
+      ...(
+        await readdir(paths.sessions).catch((error: unknown) => {
+          if (miss(error)) return [] as string[]
+          throw error
+        })
+      )
+        .map((file) => path.join(paths.sessions, file))
+        .filter((file) => file.endsWith(".md")),
     ]
     const times = await Promise.all(
       sources.map((file) =>
@@ -632,7 +647,7 @@ export namespace MemoryFiles {
     return times.some((time) => time > index.mtimeMs)
   }
 
-  export async function scaffold(root: string, scope: MemorySchema.Scope = "project", id?: MemoryPaths.Identity) {
+  export async function scaffold(root: string, id?: MemoryPaths.Identity) {
     const paths = MemoryPaths.files(root)
     await dir(root)
     await dir(paths.sessions)
@@ -643,10 +658,10 @@ export namespace MemoryFiles {
     await writeManifest(root, id)
     const exists = await Filesystem.exists(paths.state)
     const state = exists
-      ? { ...(await readState(root, scope)), enabled: true, autoInject: true }
-      : { ...MemorySchema.create(scope), enabled: true }
+      ? { ...(await readState(root)), enabled: true, autoInject: true }
+      : { ...MemorySchema.create(), enabled: true }
     await writeState(root, state)
-    await append(root, `enable ${scope} source=command`)
+    await append(root, "enable project source=command")
     return state
   }
 
@@ -714,6 +729,7 @@ export namespace MemoryFiles {
       [
         `# Session ${input.sessionID}`,
         "",
+        "Version: 1",
         `Updated: ${new Date(time).toISOString()}`,
         `Topic: ${label}`,
         "",
@@ -743,8 +759,15 @@ export namespace MemoryFiles {
     const lines = content.split("\n")
     const idx = lines.findIndex((line) => line.trim() === "## Summary")
     if (idx < 0) return
-    const time = lines.find((line) => line.startsWith("Updated: "))?.slice("Updated: ".length).trim() ?? file
-    const label = lines.find((line) => line.startsWith("Topic: "))?.slice("Topic: ".length).trim()
+    const time =
+      lines
+        .find((line) => line.startsWith("Updated: "))
+        ?.slice("Updated: ".length)
+        .trim() ?? file
+    const label = lines
+      .find((line) => line.startsWith("Topic: "))
+      ?.slice("Topic: ".length)
+      .trim()
     const summary = trim(lines.slice(idx + 1).find((line) => line.trim()) ?? "", input.max)
     if (!summary) return
     return { file, id: session(file, content), time, topic: topic({ summary, topic: label }), summary }
@@ -789,20 +812,30 @@ export namespace MemoryFiles {
       const lines = content.split("\n")
       const idx = lines.findIndex((line) => line.trim() === "## Summary")
       if (idx < 0) continue
-      const time = lines.find((line) => line.startsWith("Updated: "))?.slice("Updated: ".length).trim() ?? file
-      const label = lines.find((line) => line.startsWith("Topic: "))?.slice("Topic: ".length).trim()
+      const time =
+        lines
+          .find((line) => line.startsWith("Updated: "))
+          ?.slice("Updated: ".length)
+          .trim() ?? file
+      const label = lines
+        .find((line) => line.startsWith("Topic: "))
+        ?.slice("Topic: ".length)
+        .trim()
       const summary = trim(lines.slice(idx + 1).find((line) => line.trim()) ?? "", max)
-      if (summary) result.push({ file, id: session(file, content), time, topic: topic({ summary, topic: label }), summary })
+      if (summary)
+        result.push({ file, id: session(file, content), time, topic: topic({ summary, topic: label }), summary })
     }
     return result
   }
 
   export async function readSource(root: string, name: MemorySchema.Source) {
     const file = MemoryPaths.source(root, name)
-    return read(file).then((text) => text ?? "").catch((error: unknown) => {
-      if (miss(error)) return ""
-      throw error
-    })
+    return read(file)
+      .then((text) => text ?? "")
+      .catch((error: unknown) => {
+        if (miss(error)) return ""
+        throw error
+      })
   }
 
   export async function writeSource(root: string, name: MemorySchema.Source, text: string) {
@@ -811,24 +844,16 @@ export namespace MemoryFiles {
 
   export async function readIndex(root: string) {
     const file = MemoryPaths.files(root).index
-    return read(file).then((text) => text ?? "").catch((error: unknown) => {
-      if (miss(error)) return ""
-      throw error
-    })
+    return read(file)
+      .then((text) => text ?? "")
+      .catch((error: unknown) => {
+        if (miss(error)) return ""
+        throw error
+      })
   }
 
   export async function writeIndex(root: string, text: string) {
     await write(MemoryPaths.files(root).index, text)
-  }
-
-  function kind(file: MemorySchema.Source, section: string) {
-    if (file === "corrections.md") return "correction"
-    if (file === "environment.md") return "environment"
-    const value = section.toLowerCase()
-    if (value.includes("decision")) return "project_decision"
-    if (value.includes("constraint")) return "project_constraint"
-    if (value.includes("question")) return "open_question"
-    return "project_fact"
   }
 
   function iso(input?: number) {
@@ -841,10 +866,10 @@ export namespace MemoryFiles {
     return iso(input)
   }
 
-  async function inspect(root: string, scope: MemorySchema.Scope, data: Metadata) {
+  async function inspect(root: string, data: Metadata) {
     const now = Date.now()
     const lines: string[] = []
-    for (const file of MemorySchema.sources(scope)) {
+    for (const file of MemorySchema.Sources) {
       let section = ""
       const body = await readSource(root, file)
       for (const raw of body.split("\n")) {
@@ -866,7 +891,7 @@ export namespace MemoryFiles {
         lines.push(
           [
             `- id=${id}`,
-            `type=${kind(file, section)}`,
+            `type=${MemorySchema.kind(file, section)}`,
             `source=${file}`,
             `section=${section || "unknown"}`,
             `key=${key}`,
@@ -884,8 +909,8 @@ export namespace MemoryFiles {
     return lines.join("\n")
   }
 
-  export async function show(root: string, scope: MemorySchema.Scope = "project") {
-    const state = await readState(root, scope)
+  export async function show(root: string) {
+    const state = await readState(root)
     const metadata = await readMetadata(root)
     return {
       root,
@@ -897,11 +922,13 @@ export namespace MemoryFiles {
       },
       index: await readIndex(root),
       metadata,
-      items: await inspect(root, scope, metadata),
-      changes: await read(MemoryPaths.files(root).changes).then((text) => text ?? "").catch((error: unknown) => {
-        if (miss(error)) return ""
-        throw error
-      }),
+      items: await inspect(root, metadata),
+      changes: await read(MemoryPaths.files(root).changes)
+        .then((text) => text ?? "")
+        .catch((error: unknown) => {
+          if (miss(error)) return ""
+          throw error
+        }),
       decisions: await readDecisions(root),
     }
   }
