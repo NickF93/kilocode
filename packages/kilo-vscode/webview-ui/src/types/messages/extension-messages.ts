@@ -241,7 +241,8 @@ export interface OpenCloudSessionMessage {
 
 export interface SelectKiloModelMessage {
   type: "selectKiloModel"
-  modelID: string
+  modelID?: string
+  agent?: string
 }
 
 export interface ActionMessage {
@@ -496,12 +497,8 @@ export interface GlobalConfigLoadedMessage {
 export interface NotificationSettingsLoadedMessage {
   type: "notificationSettingsLoaded"
   settings: {
-    notifyAgent: boolean
-    notifyPermissions: boolean
-    notifyErrors: boolean
-    soundAgent: string
-    soundPermissions: string
-    soundErrors: string
+    attentionEnabled: boolean
+    attentionSound: string
   }
 }
 
